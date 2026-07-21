@@ -726,6 +726,16 @@ function transitionCampaign_(payload) {
       const approvalSnapshot = buildApprovalSnapshot_(current.id);
       upsertSetting_("approvalSnapshot:" + current.id, JSON.stringify(approvalSnapshot));
     }
+    if (target === "start" && current.status === "approved") {
+      const stored = settings_()["approvalSnapshot:" + current.id];
+      if (stored) {
+        const approvedSnapshot = JSON.parse(stored);
+        const currentSnapshot = buildApprovalSnapshot_(current.id);
+        assertApprovalSnapshotMatch_(approvedSnapshot, currentSnapshot);
+      } else {
+        throw new Error("Brak zatwierdzonego snapshota. Seria musi być ponownie zatwierdzona.");
+      }
+    }
     const next = Object.assign({}, current, { status: target, updatedAt: isoNow_() });
     updateObject_("Campaigns", current.id, next);
     if (target === "active") scheduleCampaign_(current.id);
@@ -1380,6 +1390,52 @@ function buildApprovalSnapshot_(campaignId) {
     companyCount: companyIds.length,
     companies: companies
   };
+}
+
+function assertApprovalSnapshotMatch_(approved, current) {
+  if (approved.campaignId !== current.campaignId) {
+    throw new Error("Snapshots nie pasują — ID serii się różni.");
+  }
+  if (Number(approved.companyCount) !== Number(current.companyCount)) {
+    throw new Error("Liczba firm w snapshocie się różni — seria wymaga ponownej akceptacji.");
+  }
+  if (String(approved.dryRun) !== String(current.dryRun)) {
+    throw new Error("Tryb testowy/live zmieniony od zatwierdzenia — seria wymaga ponownej akceptacji.");
+  }
+  if (Number(approved.dailyLimit) !== Number(current.dailyLimit)) {
+    throw new Error("Limit dzienny zmieniony od zatwierdzenia — seria wymaga ponownej akceptacji.");
+  }
+  if (String(approved.sendFrom) !== String(current.sendFrom) || String(approved.sendTo) !== String(current.sendTo)) {
+    throw new Error("Okno wysyłki zmienione od zatwierdzenia — seria wymaga ponownej akceptacji.");
+  }
+  if (String(approved.footerHash) !== String(current.footerHash)) {
+    throw new Error("Stopka HTML zmieniona od zatwierdzenia — seria wymaga ponownej akceptacji.");
+  }
+  const approvedCompanies = approved.companies || [];
+  const currentCompanies = current.companies || [];
+  if (approvedCompanies.length !== currentCompanies.length) {
+    throw new Error("Zmieniona lista firm odbiorców od zatwierdzenia — seria wymaga ponownej akceptacji.");
+  }
+  for (let i = 0; i < approvedCompanies.length; i++) {
+    const ac = approvedCompanies[i];
+    const cc = currentCompanies[i];
+    if (String(ac.companyId) !== String(cc.companyId)) {
+      throw new Error("Nieoczekiwana zamiana firm — seria wymaga ponownej akceptacji.");
+    }
+    if (String(ac.contactId) !== String(cc.contactId) || String(ac.contactEmail) !== String(cc.contactEmail)) {
+      throw new Error("Odbiorca zmieniony od zatwierdzenia — seria wymaga ponownej akceptacji.");
+    }
+    const amsgs = ac.messages || [];
+    const cmsgs = cc.messages || [];
+    if (amsgs.length !== cmsgs.length || amsgs.length !== 3 || cmsgs.length !== 3) {
+      throw new Error("Liczba wiadomości dla firmy różni się od zatwierdzonej — seria wymaga ponownej akceptacji.");
+    }
+    for (let j = 0; j < 3; j++) {
+      if (String(amsgs[j].subject) !== String(cmsgs[j].subject) || String(amsgs[j].body) !== String(cmsgs[j].body)) {
+        throw new Error("Treść wiadomości maila " + (j + 1) + " zmieniona od zatwierdzenia — seria wymaga ponownej akceptacji.");
+      }
+    }
+  }
 }
 
 function forceNeedsReview_(campaignId, detail) {
