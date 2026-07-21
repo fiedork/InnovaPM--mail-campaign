@@ -1179,6 +1179,15 @@ function completeCampaignIfFinished_(campaignId) {
 function sendMessage_(campaign, message) {
   const contact = requireById_("Contacts", message.contactId);
   assertMessageSafeToSend_(campaign, message, contact);
+
+  const stored = settings_()["approvalSnapshot:" + campaign.id];
+  if (!stored) {
+    throw new Error("Brak zatwierdzonego snapshota kampanii. Wymagana ponowna akceptacja.");
+  }
+  const approvedSnapshot = JSON.parse(stored);
+  const currentSnapshot = buildApprovalSnapshot_(campaign.id);
+  assertApprovalSnapshotMatch_(approvedSnapshot, currentSnapshot);
+
   if (isSuppressed_(contact.email)) {
     updateObject_("Messages", message.id, Object.assign({}, message, { status: "suppressed", updatedAt: isoNow_() }));
     return;
