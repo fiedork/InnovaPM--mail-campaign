@@ -722,6 +722,10 @@ function transitionCampaign_(payload) {
       throw new Error("Niedozwolona zmiana statusu: " + current.status + " -> " + target);
     }
     if (target === "needs_review" || target === "approved" || target === "active") validateCampaignReady_(current.id);
+    if (target === "approved") {
+      const approvalSnapshot = buildApprovalSnapshot_(current.id);
+      upsertSetting_("approvalSnapshot:" + current.id, JSON.stringify(approvalSnapshot));
+    }
     const next = Object.assign({}, current, { status: target, updatedAt: isoNow_() });
     updateObject_("Campaigns", current.id, next);
     if (target === "active") scheduleCampaign_(current.id);
@@ -1343,6 +1347,39 @@ function findOrCreateCompany_(row) {
   };
   appendObject_("Companies", company);
   return company;
+}
+
+function buildApprovalSnapshot_(campaignId) {
+  const campaign = requireById_("Campaigns", campaignId);
+  const messages = rows_("Messages").filter(function(message) { return message.campaignId === campaignId; });
+  const recipients = rows_("Recipients").filter(function(item) { return item.campaignId === campaignId && String(item.active) === "true"; });
+  const footerHash = bytesToHex_(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, String(settings_().emailFooterHtml || ""), Utilities.Charset.UTF_8));
+  const companyIds = unique_(messages.map(function(message) { return message.companyId; }));
+  const companies = companyIds.map(function(companyId) {
+    const recipient = recipients.find(function(item) { return item.companyId === companyId; });
+    const contact = recipient ? requireById_("Contacts", recipient.contactId) : null;
+    const companyMessages = messages.filter(function(message) { return message.companyId === companyId; }).sort(function(a, b) { return Number(a.step) - Number(b.step); });
+    return {
+      companyId: companyId,
+      contactId: contact ? contact.id : "",
+      contactEmail: contact ? String(contact.email).trim().toLowerCase() : "",
+      contactFullName: contact ? String(contact.fullName).trim() : "",
+      contactRole: contact ? String(contact.role).trim() : "",
+      messages: companyMessages.map(function(message) { return { step: message.step, subject: message.subject, body: message.body }; })
+    };
+  });
+  return {
+    campaignId: campaign.id,
+    campaignName: campaign.name,
+    approvedAt: isoNow_(),
+    dryRun: String(campaign.dryRun),
+    dailyLimit: Number(campaign.dailyLimit),
+    sendFrom: String(campaign.sendFrom),
+    sendTo: String(campaign.sendTo),
+    footerHash: footerHash,
+    companyCount: companyIds.length,
+    companies: companies
+  };
 }
 
 function forceNeedsReview_(campaignId, detail) {
