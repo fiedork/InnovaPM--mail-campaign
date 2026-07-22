@@ -247,9 +247,24 @@ h3 { font-size: var(--text-lg); }
 }
 .section-title {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 16px;
+}
+.section-title > div {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.section-title .button,
+.section-title .pill,
+.section-title .hint,
+.section-title .series-title-actions {
+  flex: 0 0 auto;
+  margin-top: 0;
+  align-self: center;
+}
+.section-title .button {
+  white-space: nowrap;
 }
 .copy {
   color: var(--muted);
@@ -260,11 +275,23 @@ h3 { font-size: var(--text-lg); }
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 20px;
-  align-items: start;
+  align-items: stretch;
+}
+.columns > .panel {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-height: 100%;
 }
 .action-panel .copy { max-width: 780px; }
-.action-panel .button,
-.columns .button { margin-top: 16px; }
+.action-panel > .copy {
+  margin-top: 12px;
+}
+.columns .panel > .button,
+.action-panel > .button {
+  margin-top: 4px;
+  justify-self: start;
+}
 .loading-state {
   color: var(--muted);
   text-align: center;
