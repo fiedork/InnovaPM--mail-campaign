@@ -831,7 +831,7 @@ export default function Home() {
   return (
     <main className="app-shell">
       <aside className="sidebar">
-        <div className="brand"><span className="brand-mark"><Image src="/innova-logo.jpg" alt="InnovaPM" width={44} height={44} priority /></span><div><strong>InnovaPM</strong><small>Mail Campaign</small></div></div>
+        <div className="brand"><span className="brand-mark"><Image src="/innova-logo.jpg" alt="InnovaPM" width={64} height={64} priority /></span><div><strong>InnovaPM</strong><small>Mail Campaign</small></div></div>
         <nav aria-label="Nawigacja">{navigation.map((item) => <button type="button" key={item.id} aria-current={view === item.id ? "page" : undefined} className={view === item.id ? "nav active" : "nav"} onClick={() => navigateTo(item.id)}>{item.label}</button>)}</nav>
         <div className="connection"><i className={backend ? "online" : ""} />{backend ? "Apps Script połączony" : "Tryb prototypowy"}</div>
       </aside>

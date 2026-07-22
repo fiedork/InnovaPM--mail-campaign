@@ -35,7 +35,7 @@ export default function LoginPage() {
       <section className="login-card">
         <div className="login-brand">
           <span className="login-brand-mark">
-            <Image src="/innova-logo.jpg" alt="InnovaPM" width={44} height={44} priority />
+            <Image src="/innova-logo.jpg" alt="InnovaPM" width={64} height={64} priority />
           </span>
           <div>
             <strong>InnovaPM</strong>

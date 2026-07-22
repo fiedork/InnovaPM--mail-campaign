@@ -76,15 +76,16 @@ h1, h2, h3 {
 }
 .brand-mark,
 .login-brand-mark {
-  width: 44px;
-  height: 44px;
-  border-radius: 12px;
+  width: 64px;
+  height: 64px;
+  border-radius: 16px;
   overflow: hidden;
   flex: 0 0 auto;
   background: #fff;
-  box-shadow: 0 8px 20px rgb(0 0 0 / 18%);
+  box-shadow: 0 10px 24px rgb(0 0 0 / 18%);
   display: grid;
   place-items: center;
+  padding: 4px;
 }
 .brand-mark img,
 .login-brand-mark img {
