@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { FormEvent, useEffect, useMemo, useState, type ReactNode } from "react";
 
 import {
@@ -12,10 +13,11 @@ import {
   type ContactWithCampaigns,
 } from "@/lib/domain";
 
-type View = "dashboard" | "contacts" | "campaigns" | "settings";
-type CampaignTab = "summary" | "recipients" | "sequence" | "results";
+type View = "dashboard" | "contacts" | "campaigns" | "monitoring" | "settings";
+type CampaignTab = "summary" | "recipients" | "sequence";
 type ImportKind = "campaign" | "contacts";
 type ContactFilter = "all" | "available" | "campaign" | "history" | "suppressed";
+type CampaignArchiveFilter = "active" | "archived" | "all";
 
 type ImportResult = {
   rows: unknown[];
@@ -36,6 +38,14 @@ type CampaignCompany = CampaignImportRow & {
   contactId?: string;
   hasActiveRecipient?: boolean;
   candidateContacts?: RecipientCandidate[];
+  activity?: RecipientActivity;
+};
+
+type RecipientActivity = {
+  sentSteps?: number[];
+  openedSteps?: number[];
+  replied?: boolean;
+  bounced?: boolean;
 };
 
 type SeriesStats = {
@@ -46,23 +56,47 @@ type SeriesStats = {
   opened: number;
   replies: number;
   bounces: number;
+  steps?: SeriesStepStats[];
   companies: number;
   recipients: number;
   updatedAt: string;
+  archivedAt?: string;
 };
+
+type SeriesStepStats = {
+  step: number;
+  sent: number;
+  opened: number;
+  replies: number;
+  bounces: number;
+  openRate: number;
+  replyRate: number;
+  bounceRate: number;
+};
+
+type BackendStatus = {
+  ownerEmail: string;
+  effectiveUser: string;
+  queueTriggerInstalled: boolean;
+  replyTriggerInstalled: boolean;
+  senderReady: boolean;
+  senderError: string;
+  sendTransport?: "gmail" | "smtp";
+  timezone: string;
+} | null;
 
 const navigation: { id: View; label: string }[] = [
   { id: "dashboard", label: "Dashboard" },
   { id: "contacts", label: "Kontakty" },
   { id: "campaigns", label: "Kampanie" },
+  { id: "monitoring", label: "Monitoring" },
   { id: "settings", label: "Ustawienia" },
 ];
 
 const campaignTabs: { id: CampaignTab; label: string }[] = [
   { id: "summary", label: "Podsumowanie" },
   { id: "recipients", label: "Odbiorcy" },
-  { id: "sequence", label: "Sekwencja" },
-  { id: "results", label: "Wyniki" },
+  { id: "sequence", label: "Serie maili" },
 ];
 
 const labels: Record<CampaignStatus, string> = {
@@ -100,7 +134,7 @@ const demoContact: ContactWithCampaigns = {
 
 const demoCampaignCompany: CampaignCompany = {
   id: "demo-company",
-  seriesName: "PMO Mazowsze — seria 1",
+  seriesName: "PMO Mazowsze — kampania 1",
   companyName: "Przykładowa firma",
   fullName: "Jan Kowalski",
   role: "CEO",
@@ -122,7 +156,7 @@ const demoCampaignCompany: CampaignCompany = {
 
 const demoSeries: SeriesStats = {
   id: "demo-series",
-  name: "PMO Mazowsze — seria 1",
+  name: "PMO Mazowsze — kampania 1",
   status: "needs_review",
   sent: 0,
   opened: 0,
@@ -146,6 +180,7 @@ export default function Home() {
   const [showAddContact, setShowAddContact] = useState(false);
   const [showContactImport, setShowContactImport] = useState(false);
   const [showCampaignImport, setShowCampaignImport] = useState(false);
+  const [campaignArchiveFilter, setCampaignArchiveFilter] = useState<CampaignArchiveFilter>("active");
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
   const [importKind, setImportKind] = useState<ImportKind | null>(null);
   const [campaignImportReady, setCampaignImportReady] = useState(false);
@@ -160,6 +195,7 @@ export default function Home() {
   const [busyCompanyIndex, setBusyCompanyIndex] = useState<number | null>(null);
   const [seriesName, setSeriesName] = useState("");
   const [status, setStatus] = useState<CampaignStatus>("draft");
+  const [activeCampaignArchivedAt, setActiveCampaignArchivedAt] = useState("");
   const [editingSeriesName, setEditingSeriesName] = useState(false);
   const [savingSeriesName, setSavingSeriesName] = useState(false);
   const [selectedSequenceIndex, setSelectedSequenceIndex] = useState(0);
@@ -171,14 +207,20 @@ export default function Home() {
   const [defaultDailyLimit, setDefaultDailyLimit] = useState(20);
   const [defaultSendFrom, setDefaultSendFrom] = useState("09:00");
   const [defaultSendTo, setDefaultSendTo] = useState("15:00");
-  const [timezone, setTimezone] = useState("Europe/Warsaw");
+  const [defaultMail2DelayBusinessDays, setDefaultMail2DelayBusinessDays] = useState(3);
+  const [defaultMail3DelayBusinessDays, setDefaultMail3DelayBusinessDays] = useState(3);
+  const [, setTimezone] = useState("Europe/Warsaw");
   const [savingSettings, setSavingSettings] = useState(false);
   const [campaignDryRun, setCampaignDryRun] = useState(true);
   const [campaignDailyLimit, setCampaignDailyLimit] = useState(20);
   const [campaignSendFrom, setCampaignSendFrom] = useState("09:00");
   const [campaignSendTo, setCampaignSendTo] = useState("15:00");
+  const [campaignMail2DelayBusinessDays, setCampaignMail2DelayBusinessDays] = useState(3);
+  const [campaignMail3DelayBusinessDays, setCampaignMail3DelayBusinessDays] = useState(3);
   const [savingCampaignSettings, setSavingCampaignSettings] = useState(false);
   const [seriesStats, setSeriesStats] = useState<SeriesStats[]>([]);
+  const [backendStatus, setBackendStatus] = useState<BackendStatus>(null);
+  const [liveStartConfirmed, setLiveStartConfirmed] = useState(false);
 
   useEffect(() => {
     async function initialize() {
@@ -193,10 +235,11 @@ export default function Home() {
           setSeriesStats([demoSeries]);
           return;
         }
-        const [contactsResponse, statusResponse, settingsResponse] = await Promise.all([
+        const [contactsResponse, statusResponse, settingsResponse, backendStatusResponse] = await Promise.all([
           fetch("/api/contacts"),
-          fetch("/api/status"),
+          fetch("/api/status?includeArchived=true"),
           fetch("/api/settings"),
+          fetch("/api/backend-status"),
         ]);
         if (!contactsResponse.ok || !statusResponse.ok || !settingsResponse.ok) {
           throw new Error("Nie udało się pobrać pełnych danych aplikacji.");
@@ -217,7 +260,13 @@ export default function Home() {
           if (Number.isFinite(Number(settings.dailyLimit))) setDefaultDailyLimit(Number(settings.dailyLimit));
           if (typeof settings.sendFrom === "string") setDefaultSendFrom(settings.sendFrom);
           if (typeof settings.sendTo === "string") setDefaultSendTo(settings.sendTo);
+          if (Number.isFinite(Number(settings.mail2DelayBusinessDays))) setDefaultMail2DelayBusinessDays(Number(settings.mail2DelayBusinessDays));
+          if (Number.isFinite(Number(settings.mail3DelayBusinessDays))) setDefaultMail3DelayBusinessDays(Number(settings.mail3DelayBusinessDays));
           if (typeof settings.timezone === "string") setTimezone(settings.timezone);
+        }
+        if (backendStatusResponse.ok) {
+          const result = await backendStatusResponse.json();
+          setBackendStatus(result.data ?? null);
         }
       } catch (error) {
         setContacts([]);
@@ -257,15 +306,35 @@ export default function Home() {
     });
   }, [contactFilter, contactSearch, contacts]);
 
-  const activeStats = seriesStats.find((series) => series.id === activeCampaignId);
-  const activeCampaigns = seriesStats.filter((series) => series.status === "active").length;
-  const actionRequired = seriesStats.filter((series) => ["draft", "needs_review"].includes(series.status)).length;
+  const openSeriesStats = useMemo(() => seriesStats.filter((series) => !series.archivedAt), [seriesStats]);
+  const archivedSeriesStats = useMemo(() => seriesStats.filter((series) => Boolean(series.archivedAt)), [seriesStats]);
+  const visibleCampaignStats = useMemo(() => {
+    if (campaignArchiveFilter === "archived") return archivedSeriesStats;
+    if (campaignArchiveFilter === "all") return seriesStats;
+    return openSeriesStats;
+  }, [archivedSeriesStats, campaignArchiveFilter, openSeriesStats, seriesStats]);
+  const monitoringStats = openSeriesStats;
+  const activeCampaigns = openSeriesStats.filter((series) => series.status === "active").length;
+  const actionRequired = openSeriesStats.filter((series) => ["draft", "needs_review"].includes(series.status)).length;
   const selectedSequenceCompany = campaignCompanies[selectedSequenceIndex];
   const readiness = getCampaignReadiness(campaignCompanies);
   const displayedDryRun = activeCampaignId ? campaignDryRun : defaultDryRun;
+  const isArchivedCampaign = Boolean(activeCampaignArchivedAt);
+  const startChecks = [
+    { ready: readiness.ready, label: "Dane kampanii", detail: `${readiness.recipientsReady} z ${readiness.recipientsTotal} odbiorców, ${readiness.incompleteMessages} braków w treści` },
+    { ready: Boolean(emailFooterHtml.trim()), label: "Stopka", detail: emailFooterHtml.trim() ? "Stopka HTML skonfigurowana" : "Brak stopki HTML" },
+    { ready: backend, label: "Backend", detail: backend ? "Apps Script połączony" : "Brak połączenia z backendem" },
+    { ready: Boolean(backendStatus?.queueTriggerInstalled), label: "Kolejka wysyłki", detail: backendStatus?.queueTriggerInstalled ? "runQueue aktywny" : "Brak triggera runQueue" },
+    { ready: Boolean(backendStatus?.replyTriggerInstalled), label: "Monitoring", detail: backendStatus?.replyTriggerInstalled ? "checkReplies aktywny" : "Brak triggera checkReplies" },
+    { ready: Boolean(backendStatus?.senderReady), label: "Nadawca", detail: backendStatus?.senderReady && backendStatus ? senderStatusDetail(backendStatus) : backendStatus?.senderError || "Nadawca niepotwierdzony" },
+  ];
+  const startBlocked = startChecks.some((check) => !check.ready);
+  const startModeText = campaignDryRun
+    ? `TRYB TESTOWY · wiadomości trafią do ${ownerEmail}`
+    : `LIVE · wysyłka do ${readiness.recipientsTotal} realnych odbiorców`;
 
   function navigateTo(nextView: View) {
-    if (dirtyMessageKeys.size > 0 && !window.confirm("Masz niezapisane zmiany w sekwencji. Opuścić ten ekran?")) return;
+    if (dirtyMessageKeys.size > 0 && !window.confirm("Masz niezapisane zmiany w seriach maili. Opuścić ten ekran?")) return;
     setView(nextView);
     if (nextView === "campaigns") setActiveCampaignId(null);
   }
@@ -279,18 +348,19 @@ export default function Home() {
 
   async function refreshSeries() {
     if (!backend) return;
-    const response = await fetch("/api/status");
+    const response = await fetch("/api/status?includeArchived=true");
     const result = await response.json();
     if (response.ok && Array.isArray(result.data)) setSeriesStats(result.data);
   }
 
   async function loadCampaign(campaignId: string, tab: CampaignTab = "summary") {
-    setNotice("Otwieram serię…");
+    setNotice("Otwieram kampanię…");
     try {
       if (!backend && campaignId === demoSeries.id) {
         setActiveCampaignId(campaignId);
         setSeriesName(demoSeries.name);
         setStatus(demoSeries.status);
+        setActiveCampaignArchivedAt("");
         setCampaignCompanies([demoCampaignCompany]);
       } else {
         const response = await fetch(`/api/campaigns/${encodeURIComponent(campaignId)}`);
@@ -298,21 +368,25 @@ export default function Home() {
         if (!response.ok) throw new Error(result.error);
         const campaign = result.data?.campaign ?? {};
         setActiveCampaignId(campaignId);
-        setSeriesName(String(campaign.name || "Seria bez nazwy"));
+        setSeriesName(String(campaign.name || "Kampania bez nazwy"));
         setStatus(campaign.status as CampaignStatus);
+        setActiveCampaignArchivedAt(String(campaign.archivedAt || ""));
         setCampaignDryRun(String(campaign.dryRun) !== "false");
         setCampaignDailyLimit(Number(campaign.dailyLimit || 20));
         setCampaignSendFrom(String(campaign.sendFrom || "09:00"));
         setCampaignSendTo(String(campaign.sendTo || "15:00"));
+        setCampaignMail2DelayBusinessDays(Number(campaign.mail2DelayBusinessDays || 3));
+        setCampaignMail3DelayBusinessDays(Number(campaign.mail3DelayBusinessDays || 3));
         setCampaignCompanies(Array.isArray(result.data?.companies) ? result.data.companies : []);
       }
       setSelectedSequenceIndex(0);
       setDirtyMessageKeys(new Set());
+      setLiveStartConfirmed(false);
       setCampaignTab(tab);
       setView("campaigns");
       setNotice("");
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Nie udało się otworzyć serii.");
+      setNotice(error instanceof Error ? error.message : "Nie udało się otworzyć kampanii.");
     }
   }
 
@@ -348,7 +422,7 @@ export default function Home() {
           await refreshSeries();
           setShowCampaignImport(false);
           if (created[0]?.id) await loadCampaign(String(created[0].id), "recipients");
-          setNotice(`Utworzono ${created.length} ${created.length === 1 ? "serię" : "serie"}.`);
+          setNotice(`Utworzono ${created.length} ${created.length === 1 ? "kampanię" : "kampanie"}.`);
         } else {
           setNotice(`Plik sprawdzony: ${result.data.rows.length} poprawnych rekordów.`);
         }
@@ -450,6 +524,27 @@ export default function Home() {
     }
   }
 
+  async function removeContactFromCampaign(contact: ContactWithCampaigns) {
+    if (!contact.id || !contact.companyId || !contact.currentCampaign) return;
+    if (!window.confirm(`Usunąć kontakt ${contact.fullName} z kampanii „${contact.currentCampaign.name}”? Kontakt zostanie w bazie.`)) return;
+    setBusyContactId(contact.id);
+    try {
+      if (backend) {
+        const response = await fetch(`/api/campaigns/${encodeURIComponent(contact.currentCampaign.id)}/recipients/${encodeURIComponent(contact.companyId)}`, { method: "DELETE" });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error);
+        await Promise.all([refreshContacts(), refreshSeries()]);
+      } else {
+        setContacts((current) => current.map((item) => item.id === contact.id ? { ...item, currentCampaign: null } : item));
+      }
+      setNotice("Kontakt usunięty z kampanii. Rekord pozostał w bazie kontaktów.");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Nie udało się usunąć kontaktu z kampanii.");
+    } finally {
+      setBusyContactId(null);
+    }
+  }
+
   async function assignContact(event: FormEvent<HTMLFormElement>, contact: ContactWithCampaigns) {
     event.preventDefault();
     if (!contact.id) return;
@@ -459,7 +554,7 @@ export default function Home() {
       : { mode: "existing", campaignId: String(data.get("campaignId") ?? "") };
     setBusyContactId(contact.id);
     try {
-      if (!backend) throw new Error("Dodawanie do serii wymaga połączonego backendu.");
+      if (!backend) throw new Error("Dodawanie do kampanii wymaga połączonego backendu.");
       const response = await fetch(`/api/contacts/${encodeURIComponent(contact.id)}/campaigns`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error);
@@ -467,9 +562,9 @@ export default function Home() {
       await Promise.all([refreshContacts(), refreshSeries()]);
       setCampaignFormContactId(null);
       if (campaignId) await loadCampaign(campaignId, "sequence");
-      setNotice("Kontakt dodany do serii.");
+      setNotice("Kontakt dodany do kampanii.");
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Nie udało się dodać kontaktu do serii.");
+      setNotice(error instanceof Error ? error.message : "Nie udało się dodać kontaktu do kampanii.");
     } finally {
       setBusyContactId(null);
     }
@@ -478,7 +573,7 @@ export default function Home() {
   async function deleteCampaign(series: SeriesStats) {
     const action = series.sent > 0 ? "Zarchiwizować" : "Usunąć";
     const detail = series.sent > 0 ? "Historia wysyłki zostanie zachowana." : "Tej operacji nie można cofnąć.";
-    if (!window.confirm(`${action} serię „${series.name}”? ${detail}`)) return;
+    if (!window.confirm(`${action} kampanię „${series.name}”? ${detail}`)) return;
     try {
       let archived = false;
       if (backend) {
@@ -486,12 +581,11 @@ export default function Home() {
         const result = await response.json();
         if (!response.ok) throw new Error(result.error);
         archived = Boolean(result.data?.archived);
-        await refreshContacts();
+        await Promise.all([refreshContacts(), refreshSeries()]);
       }
-      setSeriesStats((current) => current.filter((item) => item.id !== series.id));
-      setNotice(archived ? "Seria z historią została zarchiwizowana." : "Seria usunięta.");
+      setNotice(archived ? "Kampania z historią została zarchiwizowana." : "Kampania usunięta.");
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Nie udało się usunąć serii.");
+      setNotice(error instanceof Error ? error.message : "Nie udało się usunąć kampanii.");
     }
   }
 
@@ -532,9 +626,9 @@ export default function Home() {
       setSeriesName(name);
       setSeriesStats((current) => current.map((item) => item.id === activeCampaignId ? { ...item, name } : item));
       setEditingSeriesName(false);
-      setNotice("Nazwa serii zapisana.");
+      setNotice("Nazwa kampanii zapisana.");
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Nie udało się zmienić nazwy serii.");
+      setNotice(error instanceof Error ? error.message : "Nie udało się zmienić nazwy kampanii.");
     } finally {
       setSavingSeriesName(false);
     }
@@ -543,20 +637,31 @@ export default function Home() {
   async function saveCampaignSettings(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!activeCampaignId) return;
+    if (!isValidTimeWindow(campaignSendFrom, campaignSendTo)) {
+      setNotice("Niepoprawne okno wysyłki. Ustaw godziny w formacie HH:mm i upewnij się, że początek jest przed końcem.");
+      return;
+    }
     setSavingCampaignSettings(true);
     try {
       if (backend) {
         const response = await fetch(`/api/campaigns/${encodeURIComponent(activeCampaignId)}`, {
           method: "PATCH",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ dryRun: campaignDryRun, dailyLimit: campaignDailyLimit, sendFrom: campaignSendFrom, sendTo: campaignSendTo }),
+          body: JSON.stringify({ dryRun: campaignDryRun, dailyLimit: campaignDailyLimit, sendFrom: campaignSendFrom, sendTo: campaignSendTo, mail2DelayBusinessDays: campaignMail2DelayBusinessDays, mail3DelayBusinessDays: campaignMail3DelayBusinessDays }),
         });
         const result = await response.json();
         if (!response.ok) throw new Error(result.error);
+        const saved = result.data ?? {};
+        setCampaignDryRun(String(saved.dryRun) !== "false");
+        setCampaignDailyLimit(Number(saved.dailyLimit || campaignDailyLimit));
+        setCampaignSendFrom(String(saved.sendFrom || campaignSendFrom));
+        setCampaignSendTo(String(saved.sendTo || campaignSendTo));
+        setCampaignMail2DelayBusinessDays(Number(saved.mail2DelayBusinessDays || campaignMail2DelayBusinessDays));
+        setCampaignMail3DelayBusinessDays(Number(saved.mail3DelayBusinessDays || campaignMail3DelayBusinessDays));
       }
-      setNotice("Ustawienia serii zapisane.");
+      setNotice("Ustawienia kampanii zapisane.");
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Nie udało się zapisać ustawień serii.");
+      setNotice(error instanceof Error ? error.message : "Nie udało się zapisać ustawień kampanii.");
     } finally {
       setSavingCampaignSettings(false);
     }
@@ -607,29 +712,42 @@ export default function Home() {
     setSavingAllMessages(true);
     try {
       for (const step of [1, 2, 3] as const) await persistCampaignMessage(selectedSequenceIndex, step);
-      setNotice("Cała sekwencja odbiorcy została zapisana.");
+      setNotice("Wszystkie serie maili odbiorcy zostały zapisane.");
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Nie udało się zapisać całej sekwencji.");
+      setNotice(error instanceof Error ? error.message : "Nie udało się zapisać wszystkich serii maili.");
     } finally {
       setSavingAllMessages(false);
     }
   }
 
-  async function transition(action: string, next: CampaignStatus) {
+  async function transition(action: string, next: CampaignStatus, extra: Record<string, unknown> = {}) {
     if (!activeCampaignId) return;
     try {
       if (backend) {
-        const response = await fetch(`/api/campaigns/${encodeURIComponent(activeCampaignId)}/${action}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ actor: ownerEmail }) });
+        const response = await fetch(`/api/campaigns/${encodeURIComponent(activeCampaignId)}/${action}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ actor: ownerEmail, ...extra }) });
         const result = await response.json();
         if (!response.ok) throw new Error(result.error);
       }
       setStatus(next);
+      setLiveStartConfirmed(false);
       setSeriesStats((current) => current.map((item) => item.id === activeCampaignId ? { ...item, status: next } : item));
       if (["cancelled", "completed"].includes(next)) await refreshContacts();
-      setNotice(`Status serii: ${labels[next]}.`);
+      setNotice(`Status kampanii: ${labels[next]}.`);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Nie udało się zmienić statusu.");
     }
+  }
+
+  async function startCampaign() {
+    if (startBlocked) {
+      setNotice("Start zablokowany: usuń braki krytyczne z checklisty gotowości.");
+      return;
+    }
+    if (!campaignDryRun && !liveStartConfirmed) {
+      setNotice("Przed uruchomieniem LIVE potwierdź checklistę startową.");
+      return;
+    }
+    await transition("start", "active", { confirmLive: !campaignDryRun });
   }
 
   async function assignCampaignRecipient(companyIndex: number, contactId: string) {
@@ -639,8 +757,10 @@ export default function Home() {
       const response = await fetch(`/api/recipients/${encodeURIComponent(company.id)}/select`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ campaignId: activeCampaignId, contactId }) });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error);
-      await Promise.all([reloadActiveCampaign("recipients"), refreshSeries(), refreshContacts()]);
-      setNotice("Odbiorca przypisany do serii.");
+      if (String(result.data?.contactId || "") !== contactId) throw new Error("Backend nie potwierdził przypisania wybranego kontaktu.");
+      await reloadActiveCampaign("recipients");
+      await Promise.all([refreshSeries(), refreshContacts()]);
+      setNotice("Odbiorca przypisany do kampanii.");
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Nie udało się przypisać odbiorcy.");
     }
@@ -648,15 +768,15 @@ export default function Home() {
 
   async function removeCampaignRecipient(companyIndex: number) {
     const company = campaignCompanies[companyIndex];
-    if (!activeCampaignId || !company.id || !window.confirm(`Usunąć ${company.fullName} z tej serii?`)) return;
+    if (!activeCampaignId || !company.id || !window.confirm(`Usunąć ${company.fullName} z tej kampanii?`)) return;
     try {
       const response = await fetch(`/api/campaigns/${encodeURIComponent(activeCampaignId)}/recipients/${encodeURIComponent(company.id)}`, { method: "DELETE" });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error);
       await Promise.all([reloadActiveCampaign("recipients"), refreshSeries(), refreshContacts()]);
-      setNotice("Odbiorca usunięty z serii.");
+      setNotice("Odbiorca usunięty z kampanii.");
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "Nie udało się usunąć odbiorcy z serii.");
+      setNotice(error instanceof Error ? error.message : "Nie udało się usunąć odbiorcy z kampanii.");
     }
   }
 
@@ -688,7 +808,7 @@ export default function Home() {
         const response = await fetch("/api/settings", {
           method: "PATCH",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ emailFooterHtml, dryRun: defaultDryRun, dailyLimit: defaultDailyLimit, sendFrom: defaultSendFrom, sendTo: defaultSendTo }),
+          body: JSON.stringify({ emailFooterHtml, dryRun: defaultDryRun, dailyLimit: defaultDailyLimit, sendFrom: defaultSendFrom, sendTo: defaultSendTo, mail2DelayBusinessDays: defaultMail2DelayBusinessDays, mail3DelayBusinessDays: defaultMail3DelayBusinessDays }),
         });
         const result = await response.json();
         if (!response.ok) throw new Error(result.error);
@@ -697,6 +817,8 @@ export default function Home() {
         setDefaultDailyLimit(Number(result.data.dailyLimit));
         setDefaultSendFrom(String(result.data.sendFrom));
         setDefaultSendTo(String(result.data.sendTo));
+        setDefaultMail2DelayBusinessDays(Number(result.data.mail2DelayBusinessDays));
+        setDefaultMail3DelayBusinessDays(Number(result.data.mail3DelayBusinessDays));
       }
       setNotice("Ustawienia domyślne zapisane.");
     } catch (error) {
@@ -709,7 +831,7 @@ export default function Home() {
   return (
     <main className="app-shell">
       <aside className="sidebar">
-        <div className="brand"><span>IP</span><div><strong>InnovaPM</strong><small>Mail Campaign</small></div></div>
+        <div className="brand"><span className="brand-mark"><Image src="/innova-logo.jpg" alt="InnovaPM" width={44} height={44} priority /></span><div><strong>InnovaPM</strong><small>Mail Campaign</small></div></div>
         <nav aria-label="Nawigacja">{navigation.map((item) => <button type="button" key={item.id} aria-current={view === item.id ? "page" : undefined} className={view === item.id ? "nav active" : "nav"} onClick={() => navigateTo(item.id)}>{item.label}</button>)}</nav>
         <div className="connection"><i className={backend ? "online" : ""} />{backend ? "Apps Script połączony" : "Tryb prototypowy"}</div>
       </aside>
@@ -721,61 +843,54 @@ export default function Home() {
         {initializing && <section className="panel loading-state" aria-live="polite">Pobieram dane aplikacji…</section>}
 
         {!initializing && view === "dashboard" && <div className="stack">
-          <div className="metrics"><Metric label="Serie uruchomione" value={String(activeCampaigns)} note={`${seriesStats.length} wszystkich`} /><Metric label="Wymagają decyzji" value={String(actionRequired)} note="Szkic lub do akceptacji" /><Metric label="Wysłane" value={String(seriesStats.reduce((sum, item) => sum + item.sent, 0))} note="Łącznie" /><Metric label="Odpowiedzi" value={String(seriesStats.reduce((sum, item) => sum + item.replies, 0))} note="Łącznie" /></div>
-          <section className="panel action-panel"><SectionTitle eyebrow="Najbliższa decyzja" title={actionRequired ? "Dokończ przygotowanie serii" : "Brak serii wymagających decyzji"}><button type="button" className="button primary" onClick={() => navigateTo("campaigns")}>Otwórz serie</button></SectionTitle><p className="copy">Przejdź kolejno przez odbiorców, treści i kontrolę gotowości. Uruchomienie jest dostępne dopiero po uzupełnieniu wszystkich wymaganych danych.</p></section>
-          <div className="columns"><section className="panel"><p className="eyebrow">Baza kontaktów</p><h2>{contacts.length} kontaktów</h2><p className="copy">{contacts.filter((contact) => !contact.currentCampaign && !contact.suppressed).length} osób można przypisać do nowej serii.</p><button type="button" className="button" onClick={() => navigateTo("contacts")}>Zarządzaj kontaktami</button></section><section className="panel"><p className="eyebrow">Integracja</p><h2>{backend ? "Backend gotowy" : "Wymagana konfiguracja"}</h2><p className="copy">{backend ? "Połączenie z Apps Script jest aktywne." : "Dane demonstracyjne pozostają wyłącznie lokalne."}</p></section></div>
+          <div className="metrics"><Metric label="Kampanie uruchomione" value={String(activeCampaigns)} note={campaignCountLabel(openSeriesStats.length)} /><Metric label="Wymagają decyzji" value={String(actionRequired)} note="Szkic lub do akceptacji" /><Metric label="Wysłane" value={String(openSeriesStats.reduce((sum, item) => sum + item.sent, 0))} note="Łącznie" /><Metric label="Odpowiedzi" value={String(openSeriesStats.reduce((sum, item) => sum + item.replies, 0))} note="Łącznie" /></div>
+          <section className="panel action-panel"><SectionTitle eyebrow="Najbliższa decyzja" title={actionRequired ? "Dokończ przygotowanie kampanii" : "Brak kampanii wymagających decyzji"}><button type="button" className="button primary" onClick={() => navigateTo("campaigns")}>Otwórz kampanie</button></SectionTitle><p className="copy">Przejdź kolejno przez odbiorców, treści i kontrolę gotowości. Uruchomienie jest dostępne dopiero po uzupełnieniu wszystkich wymaganych danych.</p></section>
+          <div className="columns"><section className="panel"><p className="eyebrow">Baza kontaktów</p><h2>{contacts.length} kontaktów</h2><p className="copy">{contacts.filter((contact) => !contact.currentCampaign && !contact.suppressed).length} osób można przypisać do nowej kampanii.</p><button type="button" className="button" onClick={() => navigateTo("contacts")}>Zarządzaj kontaktami</button></section><section className="panel"><p className="eyebrow">Integracja</p><h2>{backend ? "Backend gotowy" : "Wymagana konfiguracja"}</h2><p className="copy">{backend ? "Połączenie z Apps Script jest aktywne." : "Dane demonstracyjne pozostają wyłącznie lokalne."}</p>{backendStatus && <div className="readiness-grid backend-readiness"><ReadinessItem ready={backendStatus.queueTriggerInstalled} label="Kolejka wysyłki" detail={backendStatus.queueTriggerInstalled ? "runQueue aktywny" : "Brak triggera runQueue"} /><ReadinessItem ready={backendStatus.replyTriggerInstalled} label="Monitoring odpowiedzi" detail={backendStatus.replyTriggerInstalled ? "checkReplies aktywny" : "Brak triggera checkReplies"} /><ReadinessItem ready={backendStatus.senderReady} label="Nadawca" detail={backendStatus.senderReady ? senderStatusDetail(backendStatus) : backendStatus.senderError || "Wymaga autoryzacji"} /></div>}</section></div>
         </div>}
 
         {!initializing && view === "contacts" && <div className="stack">
-          <section className="panel toolbar-panel"><div className="contact-toolbar"><label className="search-field">Szukaj<input type="search" value={contactSearch} onChange={(event) => setContactSearch(event.target.value)} placeholder="Imię, firma, stanowisko lub e-mail" /></label><label>Status<select value={contactFilter} onChange={(event) => setContactFilter(event.target.value as ContactFilter)}><option value="all">Wszystkie</option><option value="available">Dostępne</option><option value="campaign">W serii</option><option value="history">Po kampanii</option><option value="suppressed">Wykluczone</option></select></label><div className="toolbar-actions"><button type="button" className="button" onClick={() => setShowContactImport((current) => !current)}>{showContactImport ? "Zamknij import" : "Importuj kontakty"}</button><button type="button" className="button primary" onClick={() => setShowAddContact((current) => !current)}>{showAddContact ? "Anuluj dodawanie" : "Dodaj kontakt"}</button></div></div></section>
-          {showContactImport && <><ImportPanel kind="contacts" title="Import kontaktów" hint="Dodanie osób do bazy bez tworzenia serii" ready={false} onSubmit={(event) => importFile(event, "contacts")} /><ImportSummary result={importKind === "contacts" ? importResult : null} /></>}
+          <section className="panel toolbar-panel"><div className="contact-toolbar"><label className="search-field">Szukaj<input type="search" value={contactSearch} onChange={(event) => setContactSearch(event.target.value)} placeholder="Imię, firma, stanowisko lub e-mail" /></label><label>Status<select value={contactFilter} onChange={(event) => setContactFilter(event.target.value as ContactFilter)}><option value="all">Wszystkie</option><option value="available">Dostępne</option><option value="campaign">W kampanii</option><option value="history">Po kampanii</option><option value="suppressed">Wykluczone</option></select></label><div className="toolbar-actions"><button type="button" className="button" onClick={() => setShowContactImport((current) => !current)}>{showContactImport ? "Zamknij import" : "Importuj kontakty"}</button><button type="button" className="button primary" onClick={() => setShowAddContact((current) => !current)}>{showAddContact ? "Anuluj dodawanie" : "Dodaj kontakt"}</button></div></div></section>
+          {showContactImport && <><ImportPanel kind="contacts" title="Import kontaktów" hint="Dodanie osób do bazy bez tworzenia kampanii" ready={false} onSubmit={(event) => importFile(event, "contacts")} /><ImportSummary result={importKind === "contacts" ? importResult : null} /></>}
           {showAddContact && <section className="panel"><SectionTitle eyebrow="Nowy rekord" title="Dodaj kontakt ręcznie" /><form className="form-grid contact-create-form" key={addFormVersion} onSubmit={addContact}><label>Firma<input name="companyName" required /></label><label>Imię i nazwisko<input name="fullName" required /></label><RoleField /><label>Adres e-mail<input name="email" type="email" required /></label><label>Telefon<input name="phone" /></label><label>LinkedIn<input name="linkedin" type="url" /></label><label className="full">Notatka<textarea name="note" rows={3} /></label><div className="actions full"><button className="button primary">Dodaj kontakt</button><button className="button" type="button" onClick={() => setShowAddContact(false)}>Anuluj</button></div></form></section>}
           <section className="panel contact-list"><SectionTitle title="Kontakty"><span className="hint">{filteredContacts.length} z {contacts.length}</span></SectionTitle>{filteredContacts.length === 0 && <p className="empty-state">Brak kontaktów odpowiadających filtrom.</p>}{filteredContacts.map((contact) => {
             const editing = contact.id === editingContactId;
             const assigning = contact.id === campaignFormContactId;
             const contactStatus = contact.suppressed ? "Wykluczony" : contact.currentCampaign ? `${labels[contact.currentCampaign.status]}: ${contact.currentCampaign.name}` : contact.campaignHistory.length ? "Po kampanii" : "Dostępny";
             return <article className="contact" key={contact.id}>
-              {!editing && <><div className="contact-main"><span className="avatar">{initials(contact.fullName)}</span><span><strong>{contact.fullName}</strong><small>{contact.role} · {contact.companyName}</small><small>{contact.email}</small></span><span className={`contact-status ${contact.suppressed ? "suppressed" : ""}`}>{contactStatus}</span></div><div className="contact-actions"><button className="button compact primary" type="button" disabled={contact.suppressed || Boolean(contact.currentCampaign)} onClick={() => { setCampaignFormContactId(assigning ? null : contact.id ?? null); setCampaignMode("new"); }}>Dodaj do serii</button><button className="button compact" type="button" onClick={() => setEditingContactId(contact.id ?? null)}>Edytuj</button><button className="button compact danger" type="button" disabled={busyContactId === contact.id} onClick={() => deleteContact(contact)}>Usuń</button></div></>}
-              {assigning && !editing && <form className="campaign-assign-form" onSubmit={(event) => assignContact(event, contact)}><div className="mode-switch"><button type="button" className={campaignMode === "new" ? "active" : ""} onClick={() => setCampaignMode("new")}>Nowa seria</button><button type="button" className={campaignMode === "existing" ? "active" : ""} onClick={() => setCampaignMode("existing")}>Istniejąca seria</button></div>{campaignMode === "new" ? <label>Nazwa nowej serii<input name="name" required minLength={2} placeholder={`${contact.companyName} — seria`} /></label> : <label>Seria<select name="campaignId" required defaultValue=""><option value="" disabled>Wybierz serię</option>{seriesStats.filter((series) => ["draft", "needs_review"].includes(series.status)).map((series) => <option key={series.id} value={series.id}>{series.name}</option>)}</select></label>}<div className="actions"><button className="button primary" disabled={busyContactId === contact.id}>Dodaj i otwórz sekwencję</button><button className="button" type="button" onClick={() => setCampaignFormContactId(null)}>Anuluj</button></div></form>}
+              {!editing && <><div className="contact-main"><span className="avatar">{initials(contact.fullName)}</span><span><strong>{contact.fullName}</strong><small>{contact.role} · {contact.companyName}</small><small>{contact.email}</small></span><span className={`contact-status ${contact.suppressed ? "suppressed" : ""}`}>{contactStatus}</span></div><div className="contact-actions"><button className="button compact primary" type="button" disabled={contact.suppressed || Boolean(contact.currentCampaign)} onClick={() => { setCampaignFormContactId(assigning ? null : contact.id ?? null); setCampaignMode("new"); }}>Dodaj do kampanii</button>{contact.currentCampaign && <button className="button compact" type="button" disabled={busyContactId === contact.id} onClick={() => removeContactFromCampaign(contact)}>Usuń z kampanii</button>}<button className="button compact" type="button" onClick={() => setEditingContactId(contact.id ?? null)}>Edytuj</button><button className="button compact danger" type="button" disabled={busyContactId === contact.id} onClick={() => deleteContact(contact)}>Usuń</button></div></>}
+              {assigning && !editing && <form className="campaign-assign-form" onSubmit={(event) => assignContact(event, contact)}><div className="mode-switch"><button type="button" className={campaignMode === "new" ? "active" : ""} onClick={() => setCampaignMode("new")}>Nowa kampania</button><button type="button" className={campaignMode === "existing" ? "active" : ""} onClick={() => setCampaignMode("existing")}>Istniejąca kampania</button></div>{campaignMode === "new" ? <label>Nazwa nowej kampanii<input name="name" required minLength={2} placeholder={`${contact.companyName} — kampania`} /></label> : <label>Kampania<select name="campaignId" required defaultValue=""><option value="" disabled>Wybierz kampanię</option>{openSeriesStats.filter((series) => ["draft", "needs_review"].includes(series.status)).map((series) => <option key={series.id} value={series.id}>{series.name}</option>)}</select></label>}<div className="actions"><button className="button primary" disabled={busyContactId === contact.id}>Dodaj i otwórz kampanię</button><button className="button" type="button" onClick={() => setCampaignFormContactId(null)}>Anuluj</button></div></form>}
               {editing && <form className="contact-edit-form" onSubmit={(event) => saveContact(event, contact)}><label>Firma<input name="companyName" required minLength={2} defaultValue={contact.companyName} /></label><label>Imię i nazwisko<input name="fullName" required minLength={3} defaultValue={contact.fullName} /></label><RoleField key={contact.id} defaultValue={contact.role} /><label>Adres e-mail<input name="email" type="email" required defaultValue={contact.email} /></label><label>Telefon<input name="phone" defaultValue={contact.phone} /></label><label>LinkedIn<input name="linkedin" type="url" defaultValue={contact.linkedin} /></label><label className="full">Notatka<textarea name="note" rows={2} defaultValue={contact.note} /></label><div className="actions full"><button className="button primary" disabled={busyContactId === contact.id}>Zapisz</button><button className="button" type="button" onClick={() => setEditingContactId(null)}>Anuluj</button></div></form>}
             </article>;
           })}</section>
         </div>}
 
         {!initializing && view === "campaigns" && !activeCampaignId && <div className="stack">
-          <section className="panel action-panel"><SectionTitle eyebrow="Serie kampanii" title="Zarządzaj wysyłką"><button type="button" className="button primary" onClick={() => setShowCampaignImport((current) => !current)}>{showCampaignImport ? "Zamknij import" : "Importuj nową serię"}</button></SectionTitle><p className="copy">Jedna seria łączy odbiorców, trzy spersonalizowane wiadomości, harmonogram i wyniki.</p></section>
-          {showCampaignImport && <><ImportPanel kind="campaign" title="Import serii XLSX/CSV" hint="Jeden plik: seria, kontakt i Mail 1 / 2 / 3" ready={campaignImportReady} onFileChange={() => { setCampaignImportReady(false); if (importKind === "campaign") setImportResult(null); }} onSubmit={(event) => importFile(event, "campaign")} /><ImportSummary result={importKind === "campaign" ? importResult : null} /></>}
-          <section className="panel registry"><SectionTitle eyebrow="Rejestr serii" title="Wszystkie serie"><span className="hint">{seriesStats.length} serii</span></SectionTitle>{seriesStats.length ? <div className="registry-table-wrap"><table className="registry-table"><thead><tr><th>Seria</th><th>Status</th><th>Firmy</th><th>Odbiorcy</th><th>Aktualizacja</th><th>Akcje</th></tr></thead><tbody>{seriesStats.map((series) => <tr key={series.id}><td><strong>{series.name}</strong></td><td><span className={`pill status-${series.status}`}>{labels[series.status]}</span></td><td>{series.companies}</td><td>{series.recipients}</td><td>{formatDate(series.updatedAt)}</td><td><div className="table-actions"><button type="button" className="button compact primary" onClick={() => loadCampaign(series.id)}>Otwórz</button><button type="button" className="button compact danger" onClick={() => deleteCampaign(series)}>{series.sent > 0 ? "Archiwizuj" : "Usuń"}</button></div></td></tr>)}</tbody></table></div> : <p className="empty-state">Brak utworzonych serii. Zaimportuj pierwszy plik kampanii.</p>}</section>
+          <section className="panel action-panel"><SectionTitle eyebrow="Kampanie" title="Zarządzaj wysyłką"><button type="button" className="button primary" onClick={() => setShowCampaignImport((current) => !current)}>{showCampaignImport ? "Zamknij import" : "Importuj nową kampanię"}</button></SectionTitle><p className="copy">Jedna kampania łączy odbiorców, trzy serie wiadomości, harmonogram i wyniki.</p></section>
+          {showCampaignImport && <><ImportPanel kind="campaign" title="Import kampanii XLSX/CSV" hint="Jeden plik: kampania, kontakt i Seria 1 / 2 / 3" ready={campaignImportReady} onFileChange={() => { setCampaignImportReady(false); if (importKind === "campaign") setImportResult(null); }} onSubmit={(event) => importFile(event, "campaign")} /><ImportSummary result={importKind === "campaign" ? importResult : null} /></>}
+          <section className="panel registry"><SectionTitle eyebrow="Rejestr kampanii" title="Nazwa kampanii"><span className="hint">{campaignCountLabel(visibleCampaignStats.length)}</span></SectionTitle><div className="campaign-filter-tabs mode-switch" aria-label="Filtr kampanii"><button type="button" className={campaignArchiveFilter === "active" ? "active" : ""} onClick={() => setCampaignArchiveFilter("active")}>Aktywne ({openSeriesStats.length})</button><button type="button" className={campaignArchiveFilter === "archived" ? "active" : ""} onClick={() => setCampaignArchiveFilter("archived")}>Zarchiwizowane ({archivedSeriesStats.length})</button><button type="button" className={campaignArchiveFilter === "all" ? "active" : ""} onClick={() => setCampaignArchiveFilter("all")}>Wszystkie ({seriesStats.length})</button></div>{visibleCampaignStats.length ? <div className="registry-table-wrap"><table className="registry-table"><thead><tr><th>Nazwa kampanii</th><th>Status</th><th>Firmy</th><th>Odbiorcy</th><th>Aktualizacja</th><th>Archiwizacja</th><th>Akcje</th></tr></thead><tbody>{visibleCampaignStats.map((series) => <tr key={series.id}><td><strong>{series.name}</strong></td><td><span className={`pill ${series.archivedAt ? "status-archived" : `status-${series.status}`}`}>{series.archivedAt ? "Zarchiwizowana" : labels[series.status]}</span></td><td>{series.companies}</td><td>{series.recipients}</td><td>{formatDate(series.updatedAt)}</td><td>{series.archivedAt ? formatDate(series.archivedAt) : "—"}</td><td><div className="table-actions"><button type="button" className="button compact primary" onClick={() => loadCampaign(series.id)}>Otwórz</button>{!series.archivedAt && <button type="button" className="button compact danger" onClick={() => deleteCampaign(series)}>{series.sent > 0 ? "Archiwizuj" : "Usuń"}</button>}</div></td></tr>)}</tbody></table></div> : <p className="empty-state">{campaignArchiveFilter === "archived" ? "Brak zarchiwizowanych kampanii." : "Brak utworzonych kampanii. Zaimportuj pierwszy plik kampanii."}</p>}</section>
+        </div>}
+
+        {!initializing && view === "monitoring" && <div className="stack">
+          <div className="metrics results"><Metric label="Wysłane" value={String(monitoringStats.reduce((sum, item) => sum + item.sent, 0))} note="Łącznie" /><Metric label="Otwarte" value={String(monitoringStats.reduce((sum, item) => sum + item.opened, 0))} note={rate(monitoringStats.reduce((sum, item) => sum + item.opened, 0), monitoringStats.reduce((sum, item) => sum + item.sent, 0))} /><Metric label="Odpowiedzi" value={String(monitoringStats.reduce((sum, item) => sum + item.replies, 0))} note={rate(monitoringStats.reduce((sum, item) => sum + item.replies, 0), monitoringStats.reduce((sum, item) => sum + item.recipients, 0))} /><Metric label="Odbicia" value={String(monitoringStats.reduce((sum, item) => sum + item.bounces, 0))} note={rate(monitoringStats.reduce((sum, item) => sum + item.bounces, 0), monitoringStats.reduce((sum, item) => sum + item.sent, 0))} /></div>
+          <AggregateMonitoringPie seriesStats={monitoringStats} />
+          <section className="panel registry"><SectionTitle eyebrow="Monitoring" title="Wyniki kampanii"><span className="hint">{campaignCountLabel(monitoringStats.length)}</span></SectionTitle>{monitoringStats.length ? <div className="registry-table-wrap"><table className="registry-table monitoring-table"><thead><tr><th>Kampania</th><th>Status</th><th>Odbiorcy</th><th>Wysłane</th><th>Otwarte</th><th>Odpowiedzi</th><th>Bounce</th><th>Akcje</th></tr></thead><tbody>{monitoringStats.map((series) => <CampaignMonitoringRows key={series.id} series={series} onOpen={() => loadCampaign(series.id)} />)}</tbody></table></div> : <p className="empty-state">Brak kampanii do monitorowania.</p>}</section>
         </div>}
 
         {!initializing && view === "campaigns" && activeCampaignId && <div className="stack">
-          <section className="panel campaign-head"><button type="button" className="back-link" onClick={() => { setActiveCampaignId(null); setCampaignTab("summary"); }}>← Wszystkie serie</button><SectionTitle eyebrow="Szczegóły serii" title={seriesName}><div className="series-title-actions"><b className={`pill status-${status}`}>{labels[status]}</b><button type="button" className="button compact" onClick={() => setEditingSeriesName((current) => !current)}>{editingSeriesName ? "Anuluj" : "Zmień nazwę"}</button></div></SectionTitle>{editingSeriesName && <form className="series-name-form" onSubmit={saveSeriesName}><label>Nazwa serii<input name="seriesName" required minLength={2} defaultValue={seriesName} /></label><button className="button primary" disabled={savingSeriesName}>Zapisz nazwę</button></form>}<div className="campaign-tabs" role="tablist" aria-label="Szczegóły serii">{campaignTabs.map((tab) => <button type="button" id={`tab-${tab.id}`} aria-controls={`panel-${tab.id}`} role="tab" aria-selected={campaignTab === tab.id} className={campaignTab === tab.id ? "active" : ""} key={tab.id} onClick={() => setCampaignTab(tab.id)}>{tab.label}{tab.id === "sequence" && dirtyMessageKeys.size > 0 ? ` (${dirtyMessageKeys.size})` : ""}</button>)}</div></section>
+          <section className="panel campaign-head"><button type="button" className="back-link" onClick={() => { setActiveCampaignId(null); setCampaignTab("summary"); }}>← Wszystkie kampanie</button><SectionTitle eyebrow="Szczegóły kampanii" title={seriesName}><div className="series-title-actions"><b className={`pill ${isArchivedCampaign ? "status-archived" : `status-${status}`}`}>{isArchivedCampaign ? "Zarchiwizowana" : labels[status]}</b>{!isArchivedCampaign && <button type="button" className="button compact" onClick={() => setEditingSeriesName((current) => !current)}>{editingSeriesName ? "Anuluj" : "Zmień nazwę"}</button>}</div></SectionTitle>{isArchivedCampaign && <p className="archive-note">Archiwum tylko do odczytu. Możesz przeglądać odbiorców, treści i wyniki, ale edycja oraz wysyłka są zablokowane.</p>}{editingSeriesName && !isArchivedCampaign && <form className="series-name-form" onSubmit={saveSeriesName}><label>Nazwa kampanii<input name="seriesName" required minLength={2} defaultValue={seriesName} /></label><button className="button primary" disabled={savingSeriesName}>Zapisz nazwę</button></form>}<div className="campaign-tabs" role="tablist" aria-label="Szczegóły kampanii">{campaignTabs.map((tab) => <button type="button" id={`tab-${tab.id}`} aria-controls={`panel-${tab.id}`} role="tab" aria-selected={campaignTab === tab.id} className={campaignTab === tab.id ? "active" : ""} key={tab.id} onClick={() => setCampaignTab(tab.id)}>{tab.label}{tab.id === "sequence" && dirtyMessageKeys.size > 0 ? ` (${dirtyMessageKeys.size})` : ""}</button>)}</div></section>
 
-          {campaignTab === "summary" && <div id="panel-summary" role="tabpanel" aria-labelledby="tab-summary" className="stack"><section className="panel"><SectionTitle eyebrow="Kontrola gotowości" title={readiness.ready ? "Seria kompletna" : "Uzupełnij serię przed akceptacją"}><b className={readiness.ready ? "pill" : "pill warning"}>{readiness.ready ? "Gotowa" : "Wymaga pracy"}</b></SectionTitle><div className="readiness-grid"><ReadinessItem ready={campaignCompanies.length > 0} label="Firmy" detail={`${campaignCompanies.length} rekordów`} /><ReadinessItem ready={readiness.recipientsReady === readiness.recipientsTotal && readiness.recipientsTotal > 0} label="Odbiorcy" detail={`${readiness.recipientsReady} z ${readiness.recipientsTotal} przypisanych`} /><ReadinessItem ready={readiness.incompleteMessages === 0 && campaignCompanies.length > 0} label="Treści" detail={readiness.incompleteMessages ? `${readiness.incompleteMessages} wiadomości do uzupełnienia` : "3 wiadomości na odbiorcę"} /><ReadinessItem ready={Boolean(emailFooterHtml.trim())} label="Stopka" detail={emailFooterHtml.trim() ? "Skonfigurowana" : "Brak stopki"} /></div><div className="primary-workflow-action">{status === "draft" && <button type="button" className="button primary" disabled={!readiness.ready} onClick={() => transition("review", "needs_review")}>Przekaż do akceptacji</button>}{status === "needs_review" && <button type="button" className="button primary" disabled={!readiness.ready} onClick={() => transition("approve", "approved")}>Zatwierdź serię</button>}{status === "approved" && <button type="button" className="button primary" onClick={() => transition("start", "active")}>Uruchom serię</button>}{status === "active" && <button type="button" className="button" onClick={() => transition("pause", "paused")}>Wstrzymaj</button>}{status === "paused" && <button type="button" className="button primary" onClick={() => transition("resume", "active")}>Wznów</button>}{!readiness.ready && ["draft", "needs_review"].includes(status) && <span className="hint">Najpierw przypisz odbiorców i uzupełnij wszystkie wiadomości.</span>}{!["completed", "cancelled"].includes(status) && <button type="button" className="button danger" onClick={() => transition("cancel", "cancelled")}>Anuluj serię</button>}</div></section>
-            <section className="panel"><SectionTitle eyebrow="Ta seria" title="Ustawienia wysyłki"><span className="hint">Edycja przed zatwierdzeniem</span></SectionTitle><form className="campaign-settings-form" onSubmit={saveCampaignSettings}><label className="toggle"><span><strong>Tryb testowy</strong><small>Wiadomości trafiają wyłącznie do właściciela</small></span><input type="checkbox" checked={campaignDryRun} disabled={!backend || !["draft", "needs_review"].includes(status)} onChange={(event) => setCampaignDryRun(event.target.checked)} /></label><label>Limit dzienny<input type="number" min={1} max={20} value={campaignDailyLimit} disabled={!["draft", "needs_review"].includes(status)} onChange={(event) => setCampaignDailyLimit(Number(event.target.value))} /></label><label>Od<input type="time" value={campaignSendFrom} disabled={!["draft", "needs_review"].includes(status)} onChange={(event) => setCampaignSendFrom(event.target.value)} /></label><label>Do<input type="time" value={campaignSendTo} disabled={!["draft", "needs_review"].includes(status)} onChange={(event) => setCampaignSendTo(event.target.value)} /></label><button className="button primary" disabled={savingCampaignSettings || !["draft", "needs_review"].includes(status)}>Zapisz ustawienia serii</button></form></section>
-            <CompanyDataList companies={campaignCompanies} editingIndex={editingCompanyIndex} busyIndex={busyCompanyIndex} setEditing={setEditingCompanyIndex} onSave={saveCampaignCompany} />
+          {campaignTab === "summary" && <div id="panel-summary" role="tabpanel" aria-labelledby="tab-summary" className="stack"><section className="panel"><SectionTitle eyebrow="Kontrola gotowości" title={isArchivedCampaign ? "Kampania w archiwum" : readiness.ready ? "Kampania kompletna" : "Uzupełnij kampanię przed akceptacją"}><b className={isArchivedCampaign ? "pill status-archived" : readiness.ready ? "pill" : "pill warning"}>{isArchivedCampaign ? "Tylko podgląd" : readiness.ready ? "Gotowa" : "Wymaga pracy"}</b></SectionTitle><div className="readiness-grid"><ReadinessItem ready={campaignCompanies.length > 0} label="Firmy" detail={`${campaignCompanies.length} rekordów`} /><ReadinessItem ready={readiness.recipientsReady === readiness.recipientsTotal && readiness.recipientsTotal > 0} label="Odbiorcy" detail={`${readiness.recipientsReady} z ${readiness.recipientsTotal} przypisanych`} /><ReadinessItem ready={readiness.incompleteMessages === 0 && campaignCompanies.length > 0} label="Treści" detail={readiness.incompleteMessages ? `${readiness.incompleteMessages} wiadomości do uzupełnienia` : "3 serie wiadomości na odbiorcę"} /><ReadinessItem ready={Boolean(emailFooterHtml.trim())} label="Stopka" detail={emailFooterHtml.trim() ? "Skonfigurowana" : "Brak stopki"} /></div><section className="preflight-card"><SectionTitle eyebrow="Przed uruchomieniem" title="Bezpieczny start wysyłki"><b className={campaignDryRun ? "pill warning" : "pill danger"}>{startModeText}</b></SectionTitle><div className="preflight-grid">{startChecks.map((check) => <ReadinessItem key={check.label} ready={check.ready} label={check.label} detail={check.detail} />)}</div><div className="preflight-summary"><span><strong>Harmonogram:</strong> {campaignSendFrom}–{campaignSendTo}, limit {campaignDailyLimit}/dzień, seria 2 po {campaignMail2DelayBusinessDays} dniach roboczych, seria 3 po {campaignMail3DelayBusinessDays} dniach roboczych.</span>{!campaignDryRun && !isArchivedCampaign && <label className="confirm-live"><input type="checkbox" checked={liveStartConfirmed} onChange={(event) => setLiveStartConfirmed(event.target.checked)} />Potwierdzam start LIVE do realnych odbiorców po kontroli danych i treści.</label>}</div></section>{isArchivedCampaign ? <p className="archive-note">Ta kampania została zarchiwizowana {formatDate(activeCampaignArchivedAt)}. Akcje operacyjne są niedostępne.</p> : <div className="primary-workflow-action">{status === "draft" && <button type="button" className="button primary" disabled={!readiness.ready} onClick={() => transition("review", "needs_review")}>Przekaż do akceptacji</button>}{status === "needs_review" && <button type="button" className="button primary" disabled={!readiness.ready} onClick={() => transition("approve", "approved")}>Zatwierdź kampanię</button>}{status === "approved" && <button type="button" className="button primary" disabled={startBlocked || (!campaignDryRun && !liveStartConfirmed)} onClick={startCampaign}>Uruchom kampanię</button>}{status === "active" && <button type="button" className="button" onClick={() => transition("pause", "paused")}>Wstrzymaj</button>}{status === "paused" && <button type="button" className="button primary" onClick={() => transition("resume", "active")}>Wznów</button>}{startBlocked && status === "approved" && <span className="hint">Start zablokowany: uzupełnij pozycje oznaczone „!”.</span>}{!readiness.ready && ["draft", "needs_review"].includes(status) && <span className="hint">Najpierw przypisz odbiorców i uzupełnij wszystkie wiadomości.</span>}{!["completed", "cancelled"].includes(status) && <button type="button" className="button danger" onClick={() => transition("cancel", "cancelled")}>Anuluj kampanię</button>}</div>}</section>
+            <section className="panel"><SectionTitle eyebrow="Ta kampania" title="Ustawienia wysyłki"><span className="hint">{isArchivedCampaign ? "Tylko podgląd" : "Edycja przed zatwierdzeniem"}</span></SectionTitle><form className="campaign-settings-form" onSubmit={saveCampaignSettings}><label className="toggle"><span><strong>Tryb testowy</strong><small>Wiadomości trafiają wyłącznie do właściciela; kolejne maile testowe idą co godzinę.</small></span><input type="checkbox" checked={campaignDryRun} disabled={!backend || isArchivedCampaign || !["draft", "needs_review"].includes(status)} onChange={(event) => { setCampaignDryRun(event.target.checked); setLiveStartConfirmed(false); }} /></label><label>Seria 2 po dniach roboczych<input type="number" min={0} max={30} value={campaignMail2DelayBusinessDays} disabled={isArchivedCampaign || !["draft", "needs_review"].includes(status)} onChange={(event) => setCampaignMail2DelayBusinessDays(Number(event.target.value))} /></label><label>Seria 3 po dniach roboczych<input type="number" min={0} max={30} value={campaignMail3DelayBusinessDays} disabled={isArchivedCampaign || !["draft", "needs_review"].includes(status)} onChange={(event) => setCampaignMail3DelayBusinessDays(Number(event.target.value))} /></label><label>Limit dzienny<input type="number" min={1} max={20} value={campaignDailyLimit} disabled={isArchivedCampaign || !["draft", "needs_review"].includes(status)} onChange={(event) => setCampaignDailyLimit(Number(event.target.value))} /></label><label>Od<input type="time" value={campaignSendFrom} disabled={isArchivedCampaign || !["draft", "needs_review"].includes(status)} onChange={(event) => setCampaignSendFrom(event.target.value)} /></label><label>Do<input type="time" value={campaignSendTo} disabled={isArchivedCampaign || !["draft", "needs_review"].includes(status)} onChange={(event) => setCampaignSendTo(event.target.value)} /></label>{campaignDryRun && !isArchivedCampaign && <p className="hint">W trybie testowym trzy serie maili w kampanii są planowane w odstępach godzinowych. Ustaw okno wysyłki minimum na 3 godziny, np. 09:00–12:00.</p>}{!isArchivedCampaign && <button className="button primary" disabled={savingCampaignSettings || !["draft", "needs_review"].includes(status)}>Zapisz ustawienia kampanii</button>}</form></section>
+            <CompanyDataList companies={campaignCompanies} status={status} archived={isArchivedCampaign} editingIndex={editingCompanyIndex} busyIndex={busyCompanyIndex} setEditing={setEditingCompanyIndex} onSave={saveCampaignCompany} onTransition={transition} />
           </div>}
 
-          {campaignTab === "recipients" && <div id="panel-recipients" role="tabpanel" aria-labelledby="tab-recipients"><RecipientList companies={campaignCompanies} status={status} onAssign={assignCampaignRecipient} onRemove={removeCampaignRecipient} onSaveContact={saveCampaignRecipientContact} onOpenContacts={() => navigateTo("contacts")} /></div>}
+          {campaignTab === "recipients" && <div id="panel-recipients" role="tabpanel" aria-labelledby="tab-recipients"><RecipientList companies={campaignCompanies} status={status} archived={isArchivedCampaign} onAssign={assignCampaignRecipient} onRemove={removeCampaignRecipient} onSaveContact={saveCampaignRecipientContact} onOpenContacts={() => navigateTo("contacts")} /></div>}
 
-          {campaignTab === "recipients" && <section className="panel"><SectionTitle eyebrow="Wymagana akceptacja" title="Sygnał zakupowy i personalizacja"><span className="hint">Wymagane dla każdego odbiorcy</span></SectionTitle>{campaignCompanies.map((company, index) => {
-            if (company.hasActiveRecipient !== true) return null;
-            return <article className="company-row" key={company.id ?? `${company.companyName}-${index}`}>
-              <div className="company-summary"><div className="company-toggle"><span><strong>{company.fullName}</strong><small>{company.companyName}</small></span></div></div>
-              <form className="company-edit-form" onSubmit={(event) => saveCampaignCompany(event, index)}>
-                <label>Sygnał zakupowy / Trigger<input name="trigger" required defaultValue={company.trigger} /></label>
-                <label>Dlaczego ta osoba / Dlaczego teraz?<textarea name="note" rows={3} required defaultValue={company.note} /></label>
-                <div className="actions full"><button className="button primary" disabled={busyCompanyIndex === index}>Zapisz dla akceptacji</button></div>
-              </form>
-            </article>;
-          })}</section>}
+          {campaignTab === "sequence" && <div id="panel-sequence" role="tabpanel" aria-labelledby="tab-sequence" className="stack"><section className="panel"><SectionTitle eyebrow="Serie maili w kampanii" title={selectedSequenceCompany?.fullName || "Wybierz odbiorcę"}><span className="hint">{selectedSequenceCompany?.companyName}</span></SectionTitle>{campaignCompanies.length > 0 && <div className="sequence-toolbar"><label>Odbiorca<select value={String(selectedSequenceIndex)} onChange={(event) => setSelectedSequenceIndex(Number(event.target.value))}>{campaignCompanies.map((company, index) => <option key={company.id ?? `${company.companyName}-${index}`} value={index}>{index + 1}. {company.fullName || "Brak odbiorcy"} — {company.role || "brak stanowiska"} — {company.companyName}</option>)}</select></label><div className="sequence-navigation"><button type="button" className="button compact" disabled={selectedSequenceIndex === 0} onClick={() => setSelectedSequenceIndex((current) => current - 1)}>Poprzedni</button><span>{selectedSequenceIndex + 1} / {campaignCompanies.length}</span><button type="button" className="button compact" disabled={selectedSequenceIndex >= campaignCompanies.length - 1} onClick={() => setSelectedSequenceIndex((current) => current + 1)}>Następny</button></div></div>}</section>{selectedSequenceCompany && selectedSequenceCompany.hasActiveRecipient === true ? <><div className="sequence">{([1, 2, 3] as const).map((step, index) => { const emailKey = `email${step}` as "email1" | "email2" | "email3"; const message = parseCampaignMessage(selectedSequenceCompany[emailKey]); const saveKey = `${selectedSequenceIndex}-${step}`; const dirty = dirtyMessageKeys.has(saveKey); return <section className="panel editor" key={saveKey}><div className="message-title"><b>{initialMessages[index].day}</b><strong>Seria {step}</strong>{dirty && <span className="unsaved">Niezapisane zmiany</span>}</div><label>Temat<input value={message.subject} readOnly={isArchivedCampaign} onChange={(event) => editCampaignMessage(selectedSequenceIndex, step, "subject", event.target.value)} /></label><label>Treść<textarea rows={12} value={message.body} readOnly={isArchivedCampaign} onChange={(event) => editCampaignMessage(selectedSequenceIndex, step, "body", event.target.value)} /></label><div className="editor-meta"><small>{message.body.length} znaków</small><small>{selectedSequenceCompany.email}</small></div><details className="message-preview"><summary>Podgląd finalnej wiadomości</summary><iframe title={`Podgląd serii ${step}`} sandbox="" srcDoc={messagePreviewHtml(message.body, emailFooterHtml)} /></details>{!isArchivedCampaign && <button type="button" className="button" disabled={savingMessageKey === saveKey} onClick={() => saveCampaignMessage(selectedSequenceIndex, step)}>Zapisz serię {step}</button>}</section>; })}</div>{!isArchivedCampaign && <div className="save-all-bar"><span>{dirtyMessageKeys.size ? `${dirtyMessageKeys.size} niezapisanych zmian w kampanii` : "Wszystkie zmiany zapisane"}</span><button type="button" className="button primary" disabled={savingAllMessages} onClick={saveAllCampaignMessages}>Zapisz wszystkie serie maili</button></div>}</> : <section className="panel blocked-state"><h2>Najpierw przypisz odbiorcę</h2><p className="copy">Firma ma przygotowane wiadomości, ale żadna osoba nie jest aktywnym odbiorcą tej kampanii.</p><button type="button" className="button primary" onClick={() => setCampaignTab("recipients")}>Przejdź do odbiorców</button></section>}</div>}
 
-          {campaignTab === "sequence" && <div id="panel-sequence" role="tabpanel" aria-labelledby="tab-sequence" className="stack"><section className="panel"><SectionTitle eyebrow="Spersonalizowana sekwencja" title={selectedSequenceCompany?.fullName || "Wybierz odbiorcę"}><span className="hint">{selectedSequenceCompany?.companyName}</span></SectionTitle>{campaignCompanies.length > 0 && <div className="sequence-toolbar"><label>Odbiorca<select value={String(selectedSequenceIndex)} onChange={(event) => setSelectedSequenceIndex(Number(event.target.value))}>{campaignCompanies.map((company, index) => <option key={company.id ?? `${company.companyName}-${index}`} value={index}>{index + 1}. {company.fullName || "Brak odbiorcy"} — {company.role || "brak stanowiska"} — {company.companyName}</option>)}</select></label><div className="sequence-navigation"><button type="button" className="button compact" disabled={selectedSequenceIndex === 0} onClick={() => setSelectedSequenceIndex((current) => current - 1)}>Poprzedni</button><span>{selectedSequenceIndex + 1} / {campaignCompanies.length}</span><button type="button" className="button compact" disabled={selectedSequenceIndex >= campaignCompanies.length - 1} onClick={() => setSelectedSequenceIndex((current) => current + 1)}>Następny</button></div></div>}</section>{selectedSequenceCompany && selectedSequenceCompany.hasActiveRecipient === true ? <><div className="sequence">{([1, 2, 3] as const).map((step, index) => { const emailKey = `email${step}` as "email1" | "email2" | "email3"; const message = parseCampaignMessage(selectedSequenceCompany[emailKey]); const saveKey = `${selectedSequenceIndex}-${step}`; const dirty = dirtyMessageKeys.has(saveKey); return <section className="panel editor" key={saveKey}><div className="message-title"><b>{initialMessages[index].day}</b><strong>Mail {step}</strong>{dirty && <span className="unsaved">Niezapisane zmiany</span>}</div><label>Temat<input value={message.subject} onChange={(event) => editCampaignMessage(selectedSequenceIndex, step, "subject", event.target.value)} /></label><label>Treść<textarea rows={12} value={message.body} onChange={(event) => editCampaignMessage(selectedSequenceIndex, step, "body", event.target.value)} /></label><div className="editor-meta"><small>{message.body.length} znaków</small><small>{selectedSequenceCompany.email}</small></div><details className="message-preview"><summary>Podgląd finalnej wiadomości</summary><iframe title={`Podgląd maila ${step}`} sandbox="" srcDoc={messagePreviewHtml(message.body, emailFooterHtml)} /></details><button type="button" className="button" disabled={savingMessageKey === saveKey} onClick={() => saveCampaignMessage(selectedSequenceIndex, step)}>Zapisz mail {step}</button></section>; })}</div><div className="save-all-bar"><span>{dirtyMessageKeys.size ? `${dirtyMessageKeys.size} niezapisanych zmian w serii` : "Wszystkie zmiany zapisane"}</span><button type="button" className="button primary" disabled={savingAllMessages} onClick={saveAllCampaignMessages}>Zapisz całą sekwencję odbiorcy</button></div></> : <section className="panel blocked-state"><h2>Najpierw przypisz odbiorcę</h2><p className="copy">Firma ma przygotowane wiadomości, ale żadna osoba nie jest aktywnym odbiorcą tej serii.</p><button type="button" className="button primary" onClick={() => setCampaignTab("recipients")}>Przejdź do odbiorców</button></section>}</div>}
-
-          {campaignTab === "results" && <section id="panel-results" role="tabpanel" aria-labelledby="tab-results" className="panel"><SectionTitle eyebrow="Monitoring serii" title="Wyniki"><span className="hint">Dane dla tej serii</span></SectionTitle><div className="metrics results"><Metric label="Wysłane" value={String(activeStats?.sent ?? 0)} note="Wiadomości" /><Metric label="Otwarte" value={String(activeStats?.opened ?? 0)} note={rate(activeStats?.opened, activeStats?.sent)} /><Metric label="Odpowiedzi" value={String(activeStats?.replies ?? 0)} note={rate(activeStats?.replies, activeStats?.recipients)} /><Metric label="Odbicia" value={String(activeStats?.bounces ?? 0)} note={rate(activeStats?.bounces, activeStats?.sent)} /></div></section>}
         </div>}
 
-        {view === "settings" && <div className="settings"><section className="panel setting"><p className="eyebrow">Domyślne dla nowych serii</p><h2>Bezpieczeństwo wysyłki</h2><label className="toggle"><span><strong>Tryb testowy</strong><small>Wiadomości wyłącznie do właściciela</small></span><input type="checkbox" checked={defaultDryRun} onChange={(event) => setDefaultDryRun(event.target.checked)} /></label><label>Autoryzowany nadawca<input value={ownerEmail} readOnly /></label></section><section className="panel setting"><p className="eyebrow">Domyślne dla nowych serii</p><h2>Limity i okno</h2><label>Limit dzienny<input type="number" min={1} max={20} value={defaultDailyLimit} onChange={(event) => setDefaultDailyLimit(Number(event.target.value))} /></label><div className="inline"><label>Od<input type="time" value={defaultSendFrom} onChange={(event) => setDefaultSendFrom(event.target.value)} /></label><label>Do<input type="time" value={defaultSendTo} onChange={(event) => setDefaultSendTo(event.target.value)} /></label></div><label>Strefa czasowa<input value={timezone} readOnly /></label></section><section className="panel setting footer-setting"><SectionTitle eyebrow="Podpis i rezygnacja" title="Stopka HTML"><span className="hint">Maksymalnie 20 000 znaków</span></SectionTitle><div className="footer-editor"><label>Kod HTML<textarea className="code-editor" rows={14} spellCheck={false} value={emailFooterHtml} onChange={(event) => setEmailFooterHtml(event.target.value)} /></label><div className="footer-preview"><span>Podgląd stopki</span><iframe title="Podgląd stopki HTML" sandbox="" srcDoc={emailFooterHtml} /></div></div><div className="actions"><button type="button" className="button primary" disabled={savingSettings} onClick={saveSettings}>Zapisz wszystkie ustawienia</button><button type="button" className="button" onClick={() => setEmailFooterHtml(defaultFooterHtml)}>Przywróć wzór stopki</button></div></section></div>}
+        {view === "settings" && <div className="settings"><section className="panel setting"><p className="eyebrow">Domyślne dla nowych kampanii</p><h2>Bezpieczeństwo wysyłki</h2><label className="toggle"><span><strong>Tryb testowy</strong><small>Wiadomości wyłącznie do właściciela</small></span><input type="checkbox" checked={defaultDryRun} onChange={(event) => setDefaultDryRun(event.target.checked)} /></label><label>Autoryzowany nadawca<input value={ownerEmail} readOnly /></label></section><section className="panel setting footer-setting"><SectionTitle eyebrow="Podpis i rezygnacja" title="Stopka HTML"><span className="hint">Maksymalnie 20 000 znaków</span></SectionTitle><div className="footer-editor"><label>Kod HTML<textarea className="code-editor" rows={14} spellCheck={false} value={emailFooterHtml} onChange={(event) => setEmailFooterHtml(event.target.value)} /></label><div className="footer-preview"><span>Podgląd stopki</span><iframe title="Podgląd stopki HTML" sandbox="" srcDoc={emailFooterHtml} /></div></div><div className="actions"><button type="button" className="button primary" disabled={savingSettings} onClick={saveSettings}>Zapisz wszystkie ustawienia</button><button type="button" className="button" onClick={() => setEmailFooterHtml(defaultFooterHtml)}>Przywróć wzór stopki</button></div></section></div>}
       </section>
     </main>
   );
@@ -789,46 +904,110 @@ function RoleField({ defaultValue = "" }: { defaultValue?: string }) {
 }
 
 function ImportPanel({ kind, title, hint, ready, onSubmit, onFileChange }: { kind: ImportKind; title: string; hint: string; ready: boolean; onSubmit: (event: FormEvent<HTMLFormElement>) => void; onFileChange?: () => void }) {
-  const fields = kind === "campaign" ? [["seriesName", "Seria"], ["companyName", "Firma"], ["fullName", "Imię i nazwisko"], ["role", "Stanowisko"], ["email", "Adres e-mail"], ["email1", "Mail 1"], ["email2", "Mail 2"], ["email3", "Mail 3"]] : [["companyName", "Nazwa firmy"], ["fullName", "Imię i nazwisko"], ["role", "Stanowisko"], ["email", "Adres e-mail"]];
-  return <section className="panel"><SectionTitle eyebrow="Źródło danych" title={title}><span className="hint">{hint}</span></SectionTitle><form className="import-form" onSubmit={onSubmit}><div className="import"><input type="file" name="file" accept=".xlsx,.csv" required onChange={onFileChange} /><div className="import-actions"><button className="button primary" name="action" value="preview">Sprawdź plik</button>{kind === "campaign" && <button className="button" name="action" value="commit" disabled={!ready}>Utwórz serię/serie</button>}{kind === "contacts" && <button className="button" name="action" value="commit">Importuj kontakty</button>}</div></div><details><summary>Ręczne mapowanie kolumn</summary><div className="mapping">{fields.map(([key, label]) => <label key={key}>{label}<input name={`mapping.${key}`} placeholder={`Kolumna: ${label}`} /></label>)}</div></details>{kind === "campaign" && <p className="import-step-hint">Najpierw sprawdź plik. Po poprawnej walidacji odblokuje się utworzenie serii.</p>}</form></section>;
+  const fields = kind === "campaign" ? [["seriesName", "Kampania"], ["companyName", "Firma"], ["fullName", "Imię i nazwisko"], ["role", "Stanowisko"], ["email", "Adres e-mail"], ["email1", "Seria 1"], ["email2", "Seria 2"], ["email3", "Seria 3"]] : [["companyName", "Nazwa firmy"], ["fullName", "Imię i nazwisko"], ["role", "Stanowisko"], ["email", "Adres e-mail"]];
+  return <section className="panel"><SectionTitle eyebrow="Źródło danych" title={title}><span className="hint">{hint}</span></SectionTitle><form className="import-form" onSubmit={onSubmit}><div className="import"><input type="file" name="file" accept=".xlsx,.csv" required onChange={onFileChange} /><div className="import-actions"><button className="button primary" name="action" value="preview">Sprawdź plik</button>{kind === "campaign" && <button className="button" name="action" value="commit" disabled={!ready}>Utwórz kampanię/kampanie</button>}{kind === "contacts" && <button className="button" name="action" value="commit">Importuj kontakty</button>}</div></div><details><summary>Ręczne mapowanie kolumn</summary><div className="mapping">{fields.map(([key, label]) => <label key={key}>{label}<input name={`mapping.${key}`} placeholder={`Kolumna: ${label}`} /></label>)}</div></details>{kind === "campaign" && <p className="import-step-hint">Najpierw sprawdź plik. Po poprawnej walidacji odblokuje się utworzenie kampanii.</p>}</form></section>;
 }
 
-function RecipientList({ companies, status, onAssign, onRemove, onSaveContact, onOpenContacts }: { companies: CampaignCompany[]; status: CampaignStatus; onAssign: (index: number, contactId: string) => Promise<void>; onRemove: (index: number) => Promise<void>; onSaveContact: (event: FormEvent<HTMLFormElement>, index: number) => Promise<void>; onOpenContacts: () => void }) {
+function RecipientList({ companies, status, archived, onAssign, onRemove, onSaveContact, onOpenContacts }: { companies: CampaignCompany[]; status: CampaignStatus; archived: boolean; onAssign: (index: number, contactId: string) => Promise<void>; onRemove: (index: number) => Promise<void>; onSaveContact: (event: FormEvent<HTMLFormElement>, index: number) => Promise<void>; onOpenContacts: () => void }) {
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [assigningIndex, setAssigningIndex] = useState<number | null>(null);
-  const [candidateId, setCandidateId] = useState("");
   const [busyIndex, setBusyIndex] = useState<number | null>(null);
-  const canChangeAssignment = ["draft", "needs_review"].includes(status);
-  const canEditContact = !["completed", "cancelled"].includes(status);
+  const canChangeAssignment = !archived && ["draft", "needs_review"].includes(status);
+  const canEditContact = !archived && !["completed", "cancelled"].includes(status);
   const activeCount = companies.filter((company) => company.hasActiveRecipient !== false && company.contactId).length;
 
-  async function assign(index: number) {
-    if (!candidateId) return;
+  async function assign(index: number, selectedContactId: string) {
+    if (!selectedContactId) return;
     setBusyIndex(index);
-    await onAssign(index, candidateId);
+    await onAssign(index, selectedContactId);
     setBusyIndex(null);
     setAssigningIndex(null);
-    setCandidateId("");
   }
 
-  return <section className="panel recipient-list"><SectionTitle eyebrow="Osoby objęte serią" title="Odbiorcy"><span className="hint">{activeCount} z {companies.length} przypisanych</span></SectionTitle>{companies.length === 0 && <p className="empty-state">Brak firm i odbiorców w serii.</p>}{companies.length > 0 && <div className="recipient-table" role="table" aria-label="Odbiorcy serii"><div className="recipient-row recipient-header" role="row"><span role="columnheader">Imię i nazwisko</span><span role="columnheader">Stanowisko</span><span role="columnheader">Adres e-mail</span><span role="columnheader">Firma</span><span role="columnheader">Status</span><span role="columnheader">Akcje</span></div>{companies.map((company, index) => {
+  return <section className="panel recipient-list"><SectionTitle eyebrow="Osoby objęte kampanią" title="Odbiorcy"><span className="hint">{activeCount} z {companies.length} przypisanych</span></SectionTitle>{companies.length === 0 && <p className="empty-state">Brak firm i odbiorców w kampanii.</p>}{companies.length > 0 && <div className="recipient-table" role="table" aria-label="Odbiorcy kampanii"><div className="recipient-row recipient-header" role="row"><span role="columnheader">Imię i nazwisko</span><span role="columnheader">Stanowisko</span><span role="columnheader">Adres e-mail</span><span role="columnheader">Firma</span><span role="columnheader">Aktywność</span><span role="columnheader">Status</span><span role="columnheader">Akcje</span></div>{companies.map((company, index) => {
     const active = company.hasActiveRecipient !== false && Boolean(company.contactId);
     const editing = editingIndex === index;
     const assigning = assigningIndex === index;
-    return <div className={`recipient-row ${active ? "" : "missing"}`} role="row" key={company.id ?? `${company.companyName}-${index}`}><span role="cell" data-label="Imię i nazwisko"><strong>{company.fullName || "Brak przypisanej osoby"}</strong></span><span role="cell" data-label="Stanowisko">{company.role || "—"}</span><span role="cell" data-label="Adres e-mail">{company.email || "—"}</span><span role="cell" data-label="Firma">{company.companyName}</span><span role="cell" data-label="Status"><b className={active ? "pill" : "pill status-failed"}>{active ? "Przypisany" : "Brak odbiorcy"}</b></span><span role="cell" data-label="Akcje" className="recipient-actions">{active && canEditContact && <button type="button" className="button compact" onClick={() => { setEditingIndex(editing ? null : index); setAssigningIndex(null); }}>{editing ? "Anuluj" : "Edytuj"}</button>}{canChangeAssignment && <button type="button" className="button compact" onClick={() => { setAssigningIndex(assigning ? null : index); setEditingIndex(null); setCandidateId(company.contactId || company.candidateContacts?.[0]?.id || ""); }}>{active ? "Zmień" : "Przypisz"}</button>}{active && canChangeAssignment && <button type="button" className="button compact danger" onClick={() => onRemove(index)}>Usuń z serii</button>}</span>{editing && active && <form className="recipient-inline-form" onSubmit={async (event) => { setBusyIndex(index); await onSaveContact(event, index); setBusyIndex(null); setEditingIndex(null); }}><label>Imię i nazwisko<input name="fullName" required minLength={3} defaultValue={company.fullName} /></label><RoleField key={company.contactId} defaultValue={company.role} /><label>Adres e-mail<input name="email" type="email" required defaultValue={company.email} /></label><div className="actions"><button className="button primary" disabled={busyIndex === index}>Zapisz odbiorcę</button><button type="button" className="button" onClick={() => setEditingIndex(null)}>Anuluj</button></div></form>}{assigning && <div className="recipient-assign-form">{company.candidateContacts?.length ? <><label>Kontakt z firmy<select value={candidateId} onChange={(event) => setCandidateId(event.target.value)}><option value="" disabled>Wybierz osobę</option>{company.candidateContacts.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.fullName} — {candidate.role} — {candidate.email}</option>)}</select></label><div className="actions"><button type="button" className="button primary" disabled={!candidateId || busyIndex === index} onClick={() => assign(index)}>Zapisz przypisanie</button><button type="button" className="button" onClick={() => setAssigningIndex(null)}>Anuluj</button></div></> : <div className="empty-inline"><span>Brak kontaktów dla tej firmy.</span><button type="button" className="button" onClick={onOpenContacts}>Dodaj kontakt</button></div>}</div>}</div>;
+    const defaultCandidateId = company.contactId || company.candidateContacts?.[0]?.id || "";
+    return <div className={`recipient-row ${active ? "" : "missing"}`} role="row" key={company.id ?? `${company.companyName}-${index}`}><span role="cell" data-label="Imię i nazwisko"><strong>{company.fullName || "Brak przypisanej osoby"}</strong></span><span role="cell" data-label="Stanowisko">{company.role || "—"}</span><span role="cell" data-label="Adres e-mail">{company.email || "—"}</span><span role="cell" data-label="Firma">{company.companyName}</span><span role="cell" data-label="Aktywność"><RecipientActivityBadges activity={company.activity} /></span><span role="cell" data-label="Status"><b className={active ? "pill" : "pill status-failed"}>{active ? "Przypisany" : "Brak odbiorcy"}</b></span><span role="cell" data-label="Akcje" className="recipient-actions">{active && canEditContact && <button type="button" className="button compact" onClick={() => { setEditingIndex(editing ? null : index); setAssigningIndex(null); }}>{editing ? "Anuluj" : "Edytuj"}</button>}{canChangeAssignment && <button type="button" className="button compact" onClick={() => { setAssigningIndex(assigning ? null : index); setEditingIndex(null); }}>{active ? "Zmień" : "Przypisz"}</button>}{active && canChangeAssignment && <button type="button" className="button compact danger" onClick={() => onRemove(index)}>Usuń z kampanii</button>}</span>{editing && active && <form className="recipient-inline-form" onSubmit={async (event) => { setBusyIndex(index); await onSaveContact(event, index); setBusyIndex(null); setEditingIndex(null); }}><label>Imię i nazwisko<input name="fullName" required minLength={3} defaultValue={company.fullName} /></label><RoleField key={company.contactId} defaultValue={company.role} /><label>Adres e-mail<input name="email" type="email" required defaultValue={company.email} /></label><div className="actions"><button className="button primary" disabled={busyIndex === index}>Zapisz odbiorcę</button><button type="button" className="button" onClick={() => setEditingIndex(null)}>Anuluj</button></div></form>}{assigning && <form className="recipient-assign-form" onSubmit={async (event) => { event.preventDefault(); const formData = new FormData(event.currentTarget); await assign(index, String(formData.get("contactId") || defaultCandidateId)); }}>{company.candidateContacts?.length ? <><label>Kontakt z firmy<select name="contactId" required defaultValue={defaultCandidateId}><option value="" disabled>Wybierz osobę</option>{company.candidateContacts.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.fullName} — {candidate.role} — {candidate.email}</option>)}</select></label><div className="actions"><button className="button primary" disabled={!defaultCandidateId || busyIndex === index}>Zapisz przypisanie</button><button type="button" className="button" onClick={() => setAssigningIndex(null)}>Anuluj</button></div></> : <div className="empty-inline"><span>Brak kontaktów dla tej firmy.</span><button type="button" className="button" onClick={onOpenContacts}>Dodaj kontakt</button></div>}</form>}</div>;
   })}</div>}</section>;
 }
 
-function CompanyDataList({ companies, editingIndex, busyIndex, setEditing, onSave }: { companies: CampaignCompany[]; editingIndex: number | null; busyIndex: number | null; setEditing: (value: number | null) => void; onSave: (event: FormEvent<HTMLFormElement>, index: number) => void }) {
-  return <section className="panel company-list"><SectionTitle eyebrow="Dane pomocnicze" title="Firmy w serii"><span className="hint">{companies.length} rekordów</span></SectionTitle>{companies.map((company, index) => { const editing = editingIndex === index; return <article className="company-row" key={company.id ?? `${company.companyName}-${index}`}><div className="company-summary"><div className="company-toggle"><span><strong>{company.companyName}</strong><small>{company.sector || "Brak sektora"} · {company.packageName || "Brak pakietu"}</small></span></div><button type="button" className="button compact" onClick={() => setEditing(editing ? null : index)}>{editing ? "Anuluj" : "Edytuj firmę"}</button></div>{editing && <form className="company-edit-form" onSubmit={(event) => onSave(event, index)}><label>Nazwa firmy<input name="companyName" required minLength={2} defaultValue={company.companyName} /></label><label>Sektor<input name="sector" defaultValue={company.sector} /></label><label>Trigger<input name="trigger" defaultValue={company.trigger} /></label><label>Pakiet<input name="packageName" defaultValue={company.packageName} /></label><label className="full">Źródło<input name="source" defaultValue={company.source} /></label><div className="actions full"><button className="button primary" disabled={busyIndex === index}>Zapisz zmiany</button><button className="button" type="button" onClick={() => setEditing(null)}>Anuluj</button></div></form>}</article>; })}</section>;
+function CompanyDataList({ companies, status, archived, editingIndex, busyIndex, setEditing, onSave, onTransition }: { companies: CampaignCompany[]; status: CampaignStatus; archived: boolean; editingIndex: number | null; busyIndex: number | null; setEditing: (value: number | null) => void; onSave: (event: FormEvent<HTMLFormElement>, index: number) => void; onTransition: (action: string, next: CampaignStatus) => void }) {
+  return <section className="panel company-list"><SectionTitle eyebrow="Dane pomocnicze" title="Firmy w kampanii"><div className="company-list-status"><span className="hint">{companies.length} rekordów</span><b className={`pill ${archived ? "status-archived" : `status-${status}`}`}>{archived ? "Zarchiwizowana" : labels[status]}</b>{!archived && status === "approved" && <button type="button" className="button compact primary" onClick={() => onTransition("start", "active")}>Uruchom</button>}{!archived && status === "active" && <button type="button" className="button compact" onClick={() => onTransition("pause", "paused")}>Wstrzymaj kampanię</button>}{!archived && status === "paused" && <button type="button" className="button compact primary" onClick={() => onTransition("resume", "active")}>Wznów kampanię</button>}</div></SectionTitle>{companies.map((company, index) => { const editing = editingIndex === index; return <article className="company-row" key={company.id ?? `${company.companyName}-${index}`}><div className="company-summary"><div className="company-toggle"><span><strong>{company.companyName}</strong><small>{company.sector || "Brak sektora"} · {company.packageName || "Brak pakietu"}</small></span></div>{!archived && <button type="button" className="button compact" onClick={() => setEditing(editing ? null : index)}>{editing ? "Anuluj" : "Edytuj firmę"}</button>}</div>{editing && <form className="company-edit-form" onSubmit={(event) => onSave(event, index)}><label>Nazwa firmy<input name="companyName" required minLength={2} defaultValue={company.companyName} /></label><label>Sektor<input name="sector" defaultValue={company.sector} /></label><label>Trigger<input name="trigger" defaultValue={company.trigger} /></label><label>Pakiet<input name="packageName" defaultValue={company.packageName} /></label><label className="full">Źródło<input name="source" defaultValue={company.source} /></label><div className="actions full"><button className="button primary" disabled={busyIndex === index}>Zapisz zmiany</button><button className="button" type="button" onClick={() => setEditing(null)}>Anuluj</button></div></form>}</article>; })}</section>;
 }
 
 function ReadinessItem({ ready, label, detail }: { ready: boolean; label: string; detail: string }) { return <div className={ready ? "readiness-item ready" : "readiness-item"}><span aria-hidden="true">{ready ? "✓" : "!"}</span><div><strong>{label}</strong><small>{detail}</small></div></div>; }
+function RecipientActivityBadges({ activity }: { activity?: RecipientActivity }) {
+  const sent = normalizedSteps(activity?.sentSteps);
+  const opened = normalizedSteps(activity?.openedSteps);
+  const hasAny = sent.length > 0 || opened.length > 0 || activity?.replied || activity?.bounced;
+  if (!hasAny) return <span className="activity-empty">Brak zdarzeń</span>;
+  return <span className="recipient-activity"><b className="activity-badge sent">Wysłane {sent.length ? sent.join("/") : "—"}</b><b className="activity-badge opened">Otwarte {opened.length ? opened.join("/") : "—"}</b>{activity?.replied && <b className="activity-badge replied">Odpowiedź</b>}{activity?.bounced && <b className="activity-badge bounced">Bounce</b>}</span>;
+}
+function AggregateMonitoringPie({ seriesStats }: { seriesStats: SeriesStats[] }) {
+  const sent = seriesStats.reduce((sum, item) => sum + item.sent, 0);
+  const opened = seriesStats.reduce((sum, item) => sum + item.opened, 0);
+  const replies = seriesStats.reduce((sum, item) => sum + item.replies, 0);
+  const bounces = seriesStats.reduce((sum, item) => sum + item.bounces, 0);
+  return <MonitoringPieCard eyebrow="Aktywność" items={monitoringItems(sent, opened, replies, bounces)} denominator={sent} featured />;
+}
+function CampaignMonitoringRows({ series, onOpen }: { series: SeriesStats; onOpen: () => void }) {
+  return <><tr className="monitoring-row" tabIndex={0}><td><strong>{series.name}</strong></td><td><span className={`pill status-${series.status}`}>{labels[series.status]}</span></td><td>{series.recipients}</td><td>{series.sent}</td><td>{series.opened} <small>{rate(series.opened, series.sent)}</small></td><td>{series.replies} <small>{rate(series.replies, series.recipients)}</small></td><td>{series.bounces} <small>{rate(series.bounces, series.sent)}</small></td><td><button type="button" className="button compact primary" onClick={onOpen}>Otwórz kampanię</button></td></tr><tr className="monitoring-detail-row"><td colSpan={8}><SeriesEffectivenessBars series={series} /></td></tr></>;
+}
+function SeriesEffectivenessBars({ series }: { series: SeriesStats }) {
+  const steps = sequenceSteps(series);
+  const maxValue = Math.max(1, ...steps.flatMap((step) => [step.opened, step.replies, step.bounces]));
+  return <article className="series-bar-panel"><div className="series-bar-head"><div><p className="eyebrow">Skuteczność serii</p><h3>{series.name}</h3></div><span>{series.sent} wysłanych</span></div><div className="mail-bar-grid">{steps.map((step) => <StepBarCard key={`${series.id}-${step.step}`} step={step} maxValue={maxValue} />)}</div></article>;
+}
+function StepBarCard({ step, maxValue }: { step: SeriesStepStats; maxValue: number }) {
+  return <div className="mail-bar-card"><h4>Seria {step.step}</h4><div className="vertical-bars">{barItems(step).map((item) => <div className="vertical-bar" key={item.label}><strong>{item.value}</strong><div className="vertical-track"><i style={{ height: `${Math.max(4, (item.value / maxValue) * 100)}%`, background: item.color }} /></div><span>{item.label}</span><small>{rate(item.value, step.sent)}</small></div>)}</div><small>{step.sent} wysłanych</small></div>;
+}
+function MonitoringPieCard({ eyebrow, title, items, denominator, featured = false }: { eyebrow: string; title?: string; items: PieItem[]; denominator: number; featured?: boolean }) {
+  const activeTotal = items.filter((item) => item.kind !== "inactive").reduce((sum, item) => sum + item.value, 0);
+  return <article className={featured ? "pie-card featured" : "pie-card"}><div className="pie-copy"><p className="eyebrow">{eyebrow}</p>{title && <h3>{title}</h3>}<strong>{activeTotal}/{denominator}</strong><span>maili z aktywnością</span></div><div className="pie-visual" style={{ background: pieBackground(items) }}><span>{denominator > 0 ? `${Math.round((activeTotal / denominator) * 100)}%` : "0%"}</span></div><div className="pie-legend">{items.map((item) => <div key={item.label}><i style={{ background: item.color }} /><span>{item.label}</span><b>{item.value}</b><small>{denominator > 0 ? `${Math.round((item.value / denominator) * 100)}%` : "0%"}</small></div>)}</div></article>;
+}
 function Metric({ label, value, note }: { label: string; value: string; note: string }) { return <article className="metric"><span>{label}</span><strong>{value}</strong><small>{note}</small></article>; }
 function SectionTitle({ eyebrow, title, children }: { eyebrow?: string; title: string; children?: ReactNode }) { return <div className="section-title"><div>{eyebrow && <p className="eyebrow">{eyebrow}</p>}<h2>{title}</h2></div>{children}</div>; }
+function senderStatusDetail(status: NonNullable<BackendStatus>) { return status.sendTransport === "smtp" ? `SMTP Hostinger · ${status.ownerEmail}` : `Google/Gmail · ${status.effectiveUser || status.ownerEmail}`; }
+function campaignCountLabel(count: number) { if (count === 1) return "1 kampania"; if ([2, 3, 4].includes(count % 10) && ![12, 13, 14].includes(count % 100)) return `${count} kampanie`; return `${count} kampanii`; }
+function normalizedSteps(value?: number[]) { return Array.from(new Set((value || []).map(Number).filter((step) => [1, 2, 3].includes(step)))).sort((a, b) => a - b); }
 function ImportSummary({ result }: { result: ImportResult | null }) { if (!result) return null; const blocked = result.issues.length > 0 || result.duplicates.length > 0; return <section className="panel"><SectionTitle eyebrow="Wynik walidacji" title={`${result.rows.length} poprawnych rekordów`}><b className={blocked ? "pill status-failed" : "pill"}>{blocked ? `${result.issues.length + result.duplicates.length} problemów` : "Gotowe"}</b></SectionTitle>{result.duplicates.length > 0 && <p className="issue">Konflikty: {result.duplicates.join(", ")}</p>}{result.issues.slice(0, 8).map((issue) => <p className="issue" key={`${issue.row}-${issue.field}`}>Wiersz {issue.row}, {issue.field}: {issue.message}</p>)}</section>; }
 function formatDate(value: string) { const date = new Date(value); return Number.isNaN(date.getTime()) ? "—" : new Intl.DateTimeFormat("pl-PL", { dateStyle: "short", timeStyle: "short" }).format(date); }
 function initials(value: string) { return value.split(" ").filter(Boolean).map((part) => part[0]).join("").slice(0, 2).toUpperCase(); }
 function rate(value = 0, base = 0) { return base > 0 ? `${Math.round((value / base) * 100)}%` : "Brak danych"; }
+function isValidTimeWindow(sendFrom: string, sendTo: string) { return /^([01]\d|2[0-3]):[0-5]\d$/.test(sendFrom) && /^([01]\d|2[0-3]):[0-5]\d$/.test(sendTo) && sendFrom < sendTo; }
+type PieItem = { label: string; value: number; color: string; kind?: "inactive" };
+function monitoringItems(sent: number, opened: number, replies: number, bounces: number): PieItem[] {
+  const inactive = Math.max(0, sent - opened - replies - bounces);
+  return [
+    { label: "Otwarcia", value: opened, color: "#378ADD" },
+    { label: "Odpowiedzi", value: replies, color: "#167B55" },
+    { label: "Odbicia", value: bounces, color: "#B42318" },
+    { label: "Bez aktywności", value: inactive, color: "#DFE8F2", kind: "inactive" },
+  ];
+}
+function sequenceSteps(series: SeriesStats) {
+  return [1, 2, 3].map((step) => series.steps?.find((item) => Number(item.step) === step) ?? { step, sent: 0, opened: 0, replies: 0, bounces: 0, openRate: 0, replyRate: 0, bounceRate: 0 });
+}
+function barItems(step: SeriesStepStats) {
+  return [
+    { label: "Otwarcia", value: step.opened, color: "#378ADD" },
+    { label: "Odpowiedzi", value: step.replies, color: "#167B55" },
+    { label: "Odbicia", value: step.bounces, color: "#B42318" },
+  ];
+}
+function pieBackground(items: PieItem[]) {
+  const total = items.reduce((sum, item) => sum + item.value, 0);
+  if (total <= 0) return "conic-gradient(#dfe6ed 0deg 360deg)";
+  let cursor = 0;
+  const segments = items.map((item) => {
+    const start = cursor;
+    const end = cursor + (item.value / total) * 360;
+    cursor = end;
+    return `${item.color} ${start}deg ${end}deg`;
+  });
+  return `conic-gradient(${segments.join(", ")})`;
+}
 function messagePreviewHtml(body: string, footerHtml: string) { return `<div style="font:14px/1.6 Arial,sans-serif;color:#152334;padding:16px">${escapeHtml(body).replaceAll("\n", "<br>")}${footerHtml}</div>`; }
 function escapeHtml(value: string) { return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;"); }

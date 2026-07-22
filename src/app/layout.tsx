@@ -5,6 +5,10 @@ export const metadata: Metadata = {
   title: "InnovaPM Mail Campaign",
   description: "Prywatny panel do zarządzania kampaniami mailowymi InnovaPM.",
   robots: { index: false, follow: false },
+  icons: {
+    icon: "/innova-logo.jpg",
+    apple: "/innova-logo.jpg",
+  },
 };
 
 export default function RootLayout({

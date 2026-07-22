@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 
@@ -33,7 +34,9 @@ export default function LoginPage() {
     <main className="login-page">
       <section className="login-card">
         <div className="login-brand">
-          <span>IP</span>
+          <span className="login-brand-mark">
+            <Image src="/innova-logo.jpg" alt="InnovaPM" width={44} height={44} priority />
+          </span>
           <div>
             <strong>InnovaPM</strong>
             <small>Mail Campaign</small>
