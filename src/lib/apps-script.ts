@@ -16,12 +16,16 @@ export async function sendCommand<T>(
   action: string,
   payload: CommandPayload = {},
 ): Promise<T> {
-  const url = process.env.APPS_SCRIPT_URL;
-  const secret = process.env.APPS_SCRIPT_HMAC_SECRET;
+  let url = process.env.APPS_SCRIPT_URL?.trim();
+  const secret = process.env.APPS_SCRIPT_HMAC_SECRET?.trim();
   if (!url || !secret) {
     throw new BackendConfigurationError(
       "Brak APPS_SCRIPT_URL lub APPS_SCRIPT_HMAC_SECRET.",
     );
+  }
+
+  if (!url.startsWith("http://") && !url.startsWith("https://")) {
+    url = `https://${url}`;
   }
 
   const timestamp = Date.now().toString();
@@ -30,10 +34,14 @@ export async function sendCommand<T>(
   const signature = createHmac("sha256", secret)
     .update(`${timestamp}.${nonce}.${body}`)
     .digest("hex");
+  // Apps Script may need a cold start before it can open the campaign workbook.
+  // Keep this bounded, but leave enough time for the first request after idle.
+  const signal = AbortSignal.timeout(30_000);
 
   const response = await fetch(url, {
     method: "POST",
     cache: "no-store",
+    signal,
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ timestamp, nonce, body, signature }),
   });
