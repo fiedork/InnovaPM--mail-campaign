@@ -34,9 +34,10 @@ export async function sendCommand<T>(
   const signature = createHmac("sha256", secret)
     .update(`${timestamp}.${nonce}.${body}`)
     .digest("hex");
-  // Apps Script may need a cold start before it can open the campaign workbook.
-  // Keep this bounded, but leave enough time for the first request after idle.
-  const signal = AbortSignal.timeout(30_000);
+  // Apps Script may need a cold start and can serialize workbook access behind
+  // an earlier request. Do not abort at 30 seconds: doing so leaves the GAS
+  // execution running and makes each following request wait behind it.
+  const signal = AbortSignal.timeout(55_000);
 
   const response = await fetch(url, {
     method: "POST",
