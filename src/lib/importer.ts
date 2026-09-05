@@ -24,9 +24,9 @@ const campaignAliases = {
   phone: ["telefon", "phone"],
   linkedin: ["linkedin", "profil linkedin"],
   note: ["notatka", "uwagi", "note"],
-  email1: ["mail 1", "email 1", "wiadomosc 1", "wiadomość 1"],
-  email2: ["mail 2", "email 2", "wiadomosc 2", "wiadomość 2"],
-  email3: ["mail 3", "email 3", "wiadomosc 3", "wiadomość 3"],
+  email1: ["seria 1", "mail 1", "email 1", "wiadomosc 1", "wiadomość 1"],
+  email2: ["seria 2", "mail 2", "email 2", "wiadomosc 2", "wiadomość 2"],
+  email3: ["seria 3", "mail 3", "email 3", "wiadomosc 3", "wiadomość 3"],
   sector: ["sektor", "sector", "branza", "branża"],
   trigger: ["trigger", "trigger zakupowy", "wyzwanie"],
   packageName: ["pakiet", "pakiet innovapm", "oferta"],
@@ -74,10 +74,10 @@ async function readRows(file: File): Promise<{
   rowOffset: number;
   rowNumbers: number[];
 }> {
-  const bytes = await file.arrayBuffer();
   if (file.size > 10 * 1024 * 1024) {
     throw new Error("Plik przekracza limit 10 MB.");
   }
+  const bytes = await file.arrayBuffer();
   if (file.size > 2 * 1024 * 1024) {
     // Medium file guard — still allowed, but logged at BFF level.
   }
@@ -250,6 +250,9 @@ function richText(value: unknown): string {
   if (Array.isArray(value)) return value.map(richText).join("");
   if (typeof value === "object") {
     const record = value as Record<string, unknown>;
+    // fast-xml-parser z IgnoringAttributes false zwraca tekst atrybutowanego
+    // elementu (np. <t xml:space="preserve">) jako obiekt { "#text": "..."}.
+    if (record["#text"] !== undefined) return richText(record["#text"]);
     if (record.t !== undefined) return richText(record.t);
     if (record.r !== undefined) return richText(record.r);
   }
@@ -369,12 +372,12 @@ export async function parseCampaignFile(
 
     if (seenEmailsBySeries.has(emailInSeries)) {
       duplicates.add(
-        `E-mail ${parsed.data.email} powtórzony w serii „${seriesLabel}”`,
+        `E-mail ${parsed.data.email} powtórzony w kampanii „${seriesLabel}”`,
       );
     }
     if (seenCompaniesBySeries.has(companyInSeries)) {
       duplicates.add(
-        `Firma ${parsed.data.companyName} powtórzona w serii „${seriesLabel}”`,
+        `Firma ${parsed.data.companyName} powtórzona w kampanii „${seriesLabel}”`,
       );
     }
     seenEmailsBySeries.add(emailInSeries);
@@ -382,7 +385,7 @@ export async function parseCampaignFile(
 
     const contactSeries = seriesByEmail.get(email) ?? new Set<string>();
     if (!contactSeries.has(series) && contactSeries.size > 0) {
-      duplicates.add(`Kontakt ${parsed.data.email} występuje w wielu seriach`);
+      duplicates.add(`Kontakt ${parsed.data.email} występuje w wielu kampaniach`);
     }
     contactSeries.add(series);
     seriesByEmail.set(email, contactSeries);
