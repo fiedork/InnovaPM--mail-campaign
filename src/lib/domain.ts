@@ -87,6 +87,7 @@ export type CampaignMembership = {
 };
 
 export type ContactWithCampaigns = Contact & {
+  companyId?: string;
   currentCampaign: CampaignMembership | null;
   campaignHistory: CampaignMembership[];
   suppressed: boolean;
@@ -157,8 +158,13 @@ export function moveToBusinessDay(date: Date): Date {
 
 export function addBusinessAdjustedDays(date: Date, days: number): Date {
   const result = new Date(date);
-  result.setUTCDate(result.getUTCDate() + days);
-  return moveToBusinessDay(result);
+  let remaining = Math.max(0, Math.floor(days));
+  if (remaining === 0) return moveToBusinessDay(result);
+  while (remaining > 0) {
+    result.setUTCDate(result.getUTCDate() + 1);
+    if (isBusinessDay(result)) remaining -= 1;
+  }
+  return result;
 }
 
 export function buildSequenceSchedule(start: Date): [Date, Date, Date] {

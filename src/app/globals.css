@@ -318,6 +318,15 @@ h3 { font-size: var(--text-lg); }
   background: transparent;
   font-size: var(--text-lg);
 }
+.backend-alert {
+  margin-bottom: 20px;
+  padding: 12px 16px;
+  border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
+  border-radius: 12px;
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-weight: var(--weight-bold);
+}
 .pill {
   display: inline-flex;
   align-items: center;
@@ -1241,6 +1250,18 @@ textarea { resize: vertical; line-height: 1.55; }
 .inline { flex-wrap: nowrap; }
 .inline label { flex: 1; }
 .footer-setting { grid-column: 1 / -1; }
+.footer-profile-toolbar {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr) auto;
+  gap: 14px;
+  align-items: end;
+  margin-bottom: 18px;
+}
+.footer-profile-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
 .footer-editor {
   min-width: 0;
   display: grid;
@@ -1341,7 +1362,7 @@ textarea { resize: vertical; line-height: 1.55; }
   .sidebar nav { width: 100%; display: flex; overflow-x: auto; }
   .nav { flex: 0 0 auto; white-space: nowrap; }
   .connection { display: none; }
-  .columns, .settings, .footer-editor { grid-template-columns: minmax(0, 1fr); }
+  .columns, .settings, .footer-editor, .footer-profile-toolbar { grid-template-columns: minmax(0, 1fr); }
   .footer-setting { grid-column: auto; }
   .contact { grid-template-columns: minmax(0, 1fr); }
   .contact-actions { justify-content: flex-start; padding-left: 48px; }

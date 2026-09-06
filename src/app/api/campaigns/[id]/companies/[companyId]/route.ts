@@ -10,3 +10,14 @@ export async function PATCH(
     companyId,
   });
 }
+
+export async function DELETE(
+  request: Request,
+  context: RouteContext<"/api/campaigns/[id]/companies/[companyId]">,
+) {
+  const { id, companyId } = await context.params;
+  return proxyMutation(request, "deleteCampaignCompany", {
+    campaignId: id,
+    companyId,
+  });
+}

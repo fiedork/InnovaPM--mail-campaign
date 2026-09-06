@@ -1,5 +1,6 @@
 const OWNER_EMAIL = "krzysztof.fiedorowicz@innova.pm";
 const TIMEZONE = "Europe/Warsaw";
+const MAX_DAILY_LIMIT = 40;
 const SHEETS = {
   Campaigns: ["id", "name", "status", "dryRun", "dailyLimit", "sendFrom", "sendTo", "createdAt", "updatedAt", "archivedAt"],
   Companies: ["id", "name", "normalizedName", "sector", "trigger", "packageName", "source", "createdAt", "updatedAt"],
@@ -74,9 +75,21 @@ function verifyEnvelope_(envelope) {
   if (!envelope.nonce || !envelope.body || !envelope.signature) {
     throw new Error("Niekompletna koperta żądania.");
   }
-  const cache = CacheService.getScriptCache();
-  if (cache.get("nonce:" + envelope.nonce)) throw new Error("Powtórzone żądanie.");
-  const expected = bytesToHex_(Utilities.computeHmacSha256Signature(
+  // Atomowa rezerwacja nonce — LockService przed HMAC
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(3000)) {
+    throw new Error("Nie można uzyskać blokady dla nonce.");
+  }
+  try {
+    var cache = CacheService.getScriptCache();
+    if (cache.get("nonce:" + envelope.nonce)) {
+      throw new Error("Powtórzone żądanie.");
+    }
+    cache.put("nonce:" + envelope.nonce, "1", 600);
+  } finally {
+    lock.releaseLock();
+  }
+  var expected = bytesToHex_(Utilities.computeHmacSha256Signature(
     envelope.timestamp + "." + envelope.nonce + "." + envelope.body,
     secret,
     Utilities.Charset.UTF_8
@@ -84,7 +97,6 @@ function verifyEnvelope_(envelope) {
   if (!constantTimeEqual_(expected, String(envelope.signature))) {
     throw new Error("Niepoprawny podpis HMAC.");
   }
-  cache.put("nonce:" + envelope.nonce, "1", 600);
 }
 
 function initializeWorkbook_() {
@@ -359,7 +371,7 @@ function importCampaign_(payload) {
         name: group.name,
         status: "needs_review",
         dryRun: String(defaults.dryRun || "true"),
-        dailyLimit: String(Math.min(Number(defaults.dailyLimit || 20), 20)),
+        dailyLimit: String(Math.min(Number(defaults.dailyLimit || 20), MAX_DAILY_LIMIT)),
         sendFrom: defaults.sendFrom || "09:00",
         sendTo: defaults.sendTo || "15:00",
         createdAt: now,
@@ -675,7 +687,7 @@ function createCampaign_(payload) {
     name: name,
     status: "draft",
     dryRun: payload.dryRun === undefined ? String(defaults.dryRun || "true") : String(payload.dryRun !== false),
-    dailyLimit: Math.min(Number(payload.dailyLimit || defaults.dailyLimit || 20), 20),
+    dailyLimit: Math.min(Number(payload.dailyLimit || defaults.dailyLimit || 20), MAX_DAILY_LIMIT),
     sendFrom: payload.sendFrom || defaults.sendFrom || "09:00",
     sendTo: payload.sendTo || defaults.sendTo || "15:00",
     createdAt: now,
@@ -701,7 +713,7 @@ function updateCampaign_(payload) {
     if (payload[key] !== undefined) next[key] = payload[key];
   });
   next.dryRun = String(next.dryRun) === "false" || next.dryRun === false ? "false" : "true";
-  next.dailyLimit = Math.max(1, Math.min(Number(next.dailyLimit || 20), 20));
+  next.dailyLimit = Math.max(1, Math.min(Number(next.dailyLimit || 20), MAX_DAILY_LIMIT));
   if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(String(next.sendFrom)) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(String(next.sendTo))) {
     throw new Error("Godziny wysyłki muszą mieć format HH:mm.");
   }
@@ -1047,7 +1059,7 @@ function getSettings_() {
   return {
     emailFooterHtml: current.emailFooterHtml || "",
     dryRun: String(current.dryRun) !== "false",
-    dailyLimit: Math.max(1, Math.min(Number(current.dailyLimit || 20), 20)),
+    dailyLimit: Math.max(1, Math.min(Number(current.dailyLimit || 20), MAX_DAILY_LIMIT)),
     sendFrom: current.sendFrom || "09:00",
     sendTo: current.sendTo || "15:00",
     timezone: current.timezone || TIMEZONE
@@ -1062,7 +1074,7 @@ function updateSettings_(payload) {
     if (payload.dryRun !== undefined && typeof payload.dryRun !== "boolean") throw new Error("Tryb testowy musi być wartością logiczną.");
     const dryRun = payload.dryRun === undefined ? String(currentSettings.dryRun) !== "false" : payload.dryRun;
     const rawLimit = payload.dailyLimit === undefined ? Number(currentSettings.dailyLimit || 20) : Number(payload.dailyLimit);
-    if (!isFinite(rawLimit) || Math.floor(rawLimit) !== rawLimit || rawLimit < 1 || rawLimit > 20) throw new Error("Limit dzienny musi być liczbą całkowitą od 1 do 20.");
+    if (!isFinite(rawLimit) || Math.floor(rawLimit) !== rawLimit || rawLimit < 1 || rawLimit > MAX_DAILY_LIMIT) throw new Error("Limit dzienny musi być liczbą całkowitą od 1 do " + MAX_DAILY_LIMIT + ".");
     const sendFrom = String(payload.sendFrom === undefined ? currentSettings.sendFrom || "09:00" : payload.sendFrom);
     const sendTo = String(payload.sendTo === undefined ? currentSettings.sendTo || "15:00" : payload.sendTo);
     if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(sendFrom) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(sendTo)) throw new Error("Godziny wysyłki muszą mieć format HH:mm.");
@@ -1112,7 +1124,7 @@ function processCampaignQueue_(campaign) {
       message.sentAt &&
       String(message.sentAt).slice(0, 10) === Utilities.formatDate(new Date(), TIMEZONE, "yyyy-MM-dd");
   }).length;
-  let remaining = Math.max(0, Math.min(Number(campaign.dailyLimit || 20), 20) - sentToday);
+  let remaining = Math.max(0, Math.min(Number(campaign.dailyLimit || 20), MAX_DAILY_LIMIT) - sentToday);
   if (!remaining) return;
   const due = rows_("Messages").filter(function(message) {
     return message.campaignId === campaign.id &&
@@ -1294,7 +1306,7 @@ function validateCampaignReady_(campaignId) {
     }
   });
   const limit = Number(campaign.dailyLimit);
-  if (!isFinite(limit) || Math.floor(limit) !== limit || limit < 1 || limit > 20) throw new Error("Seria ma niepoprawny limit dzienny.");
+  if (!isFinite(limit) || Math.floor(limit) !== limit || limit < 1 || limit > MAX_DAILY_LIMIT) throw new Error("Seria ma niepoprawny limit dzienny.");
   if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(String(campaign.sendFrom)) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(String(campaign.sendTo)) || campaign.sendFrom >= campaign.sendTo) {
     throw new Error("Seria ma niepoprawne okno wysyłki.");
   }

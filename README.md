@@ -1,40 +1,41 @@
 # InnovaPM Mail Campaign
 
-Lekka, prywatna aplikacja do zarządzania kampanią D0 / D+3 / D+6 dla InnovaPM.
+Lekka, prywatna aplikacja do zarządzania kampaniami mailowymi InnovaPM z trzema seriami wiadomości w każdej kampanii.
 
 ## Zakres
 
-- jednoplikiowy import serii, kontaktów i spersonalizowanych treści z XLSX/CSV;
+- jednoplikiowy import kampanii, kontaktów i spersonalizowanych treści z XLSX/CSV;
 - ręczne dodawanie, edycja na liście i usuwanie kontaktów;
 - podgląd i edycja listy firm należących do kampanii;
 - podgląd, edycja i zapis spersonalizowanej sekwencji D0 / D+3 / D+6 dla każdej firmy;
-- edytowalna stopka HTML z izolowanym podglądem i tekstową wersją awaryjną wiadomości;
-- status każdej serii: wysłane, otwarte, odpowiedzi i bounce;
-- status bieżącej serii bezpośrednio przy kontakcie;
-- tworzenie nowej serii lub przypisanie do istniejącej z listy kontaktów;
-- bezpieczne usuwanie pustych serii i archiwizacja serii z historią wysyłki;
+- biblioteka nazwanych stopek HTML z wersją domyślną, wyborem per kampania, izolowanym podglądem i tekstową wersją awaryjną wiadomości;
+- status każdej kampanii: wysłane, otwarte, odpowiedzi i bounce;
+- status bieżącej kampanii bezpośrednio przy kontakcie;
+- tworzenie nowej kampanii lub przypisanie do istniejącej z listy kontaktów;
+- bezpieczne usuwanie pustych kampanii i archiwizacja kampanii z historią wysyłki;
 - jeden aktywny odbiorca na firmę i kampanię;
-- person-first tabela odbiorców z przypisaniem, edycją i usuwaniem z serii;
+- person-first tabela odbiorców z przypisaniem, edycją i usuwaniem z kampanii;
 - kontrola gotowości blokująca akceptację bez odbiorców lub kompletnych treści;
 - akceptacja, start, pauza, wznowienie i anulowanie kampanii;
 - automatyczne cofnięcie do ponownej akceptacji po zmianie treści lub odbiorcy;
-- limit 20 wiadomości dziennie, dni robocze, okno 09:00–15:00 `Europe/Warsaw`;
-- wysyłka i threading przez Advanced Gmail API;
+- wybierana data startu kampanii, konfigurowalny limit do 40 wiadomości dziennie, dni robocze i okno 09:00–15:00 `Europe/Warsaw`;
+- wysyłka przez Advanced Gmail API albo prywatny relay SMTP Hostingera;
 - `dry-run`, suppression list, wykrywanie odpowiedzi, autoresponderów i bounce;
 - HMAC, blokada powtórzeń, audit log i blokada równoległej kolejki.
 
 ## Workflow
 
 1. Dodaj kontakty ręcznie lub przez import.
-2. Utwórz serię z jednego pliku albo przypisz kontakt do nowej serii.
+2. Utwórz kampanię z jednego pliku albo przypisz kontakt do nowej kampanii.
 3. Sprawdź osoby w zakładce `Odbiorcy`.
-4. Uzupełnij i zapisz trzy wiadomości dla każdej osoby w `Sekwencji`.
+4. Uzupełnij i zapisz trzy serie maili dla każdej osoby.
 5. Przejdź przez `Szkic → Do akceptacji → Gotowa → Uruchomiona`.
 6. Monitoruj wysłane wiadomości, otwarcia, odpowiedzi i odbicia.
 
-Domyślne limity, okno wysyłki i tryb testowy dotyczą nowych serii. Każda
-seria przechowuje własną kopię tych ustawień. Zmiana globalnej stopki wymaga
-ponownej akceptacji serii, ponieważ wpływa na finalną treść wiadomości.
+Domyślne limity, okno wysyłki, tryb testowy i domyślna wersja stopki dotyczą
+nowych kampanii. Każda kampania przechowuje własny wybór stopki oraz kopię
+pozostałych ustawień. Zmiana treści stopki używanej przez zatwierdzoną kampanię
+wymaga ponownej akceptacji, ponieważ wpływa na finalną treść wiadomości.
 
 ## Architektura
 
@@ -45,11 +46,11 @@ ponownej akceptacji serii, ponieważ wpływa na finalną treść wiadomości.
 Google Sheet zawiera zakładki: `Campaigns`, `Companies`, `Contacts`,
 `Recipients`, `Messages`, `Events`, `Suppression`, `Settings`.
 
-## Format importu serii
+## Format importu kampanii
 
-Jeden wiersz oznacza jednego odbiorcę w konkretnej serii. Wymagane dane:
+Jeden wiersz oznacza jednego odbiorcę w konkretnej kampanii. Wymagane dane:
 
-- `Seria` (opcjonalna; bez niej nazwą serii jest nazwa pliku),
+- `Kampania` albo legacy `Seria` (opcjonalna; bez niej nazwą kampanii jest nazwa pliku),
 - `Firma`, `Imię i nazwisko`, `Stanowisko`, `Adres e-mail`,
 - `Mail 1`, `Mail 2`, `Mail 3` w formacie `Temat: ...` i treść poniżej.
 
@@ -80,6 +81,11 @@ APPS_SCRIPT_HMAC_SECRET=...
 CAMPAIGN_OWNER_EMAIL=krzysztof.fiedorowicz@innova.pm
 APP_ACCESS_PASSWORD=...
 APP_AUTH_SECRET=...
+SMTP_HOST=smtp.hostinger.com
+SMTP_PORT=465
+SMTP_USER=krzysztof.fiedorowicz@innova.pm
+SMTP_PASS=...
+SMTP_FROM_EMAIL=krzysztof.fiedorowicz@innova.pm
 ```
 
 Endpoint Apps Script jest dostępny anonimowo wyłącznie dlatego, że serwer

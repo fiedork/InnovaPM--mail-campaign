@@ -31,7 +31,6 @@ function dispatch_(action, payload) {
     createCampaign: createCampaign_,
     updateCampaign: updateCampaign_,
     updateCampaignCompany: updateCampaignCompany_,
-    deleteCampaignCompany: deleteCampaignCompany_,
     transitionCampaign: transitionCampaign_,
     deleteCampaign: deleteCampaign_,
     restoreCampaign: restoreCampaign_,

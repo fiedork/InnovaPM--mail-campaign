@@ -7,6 +7,10 @@ const actions = new Set([
   "pause",
   "resume",
   "cancel",
+  "reopen",
+  "prepare-correction",
+  "restore",
+  "clear-activity",
 ]);
 
 export async function POST(
@@ -19,6 +23,12 @@ export async function POST(
       { ok: false, error: "Nieobsługiwana operacja kampanii." },
       { status: 404 },
     );
+  }
+  if (action === "restore") {
+    return proxyMutation(request, "restoreCampaign", { id });
+  }
+  if (action === "clear-activity") {
+    return proxyMutation(request, "clearCampaignActivity", { id });
   }
   return proxyMutation(request, "transitionCampaign", { id, action });
 }

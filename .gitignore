@@ -46,3 +46,10 @@ test-results/
 playwright-report/
 /desktop-attachments/
 /.hermes/
+/.worktrees/
+
+# generated artifacts
+/dogfood-output/
+/architecture/
+/outputs/
+.DS_Store

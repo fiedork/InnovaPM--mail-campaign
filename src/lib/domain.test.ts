@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   allowedRoles,
@@ -23,14 +23,14 @@ function csvFile(headers: string[], rows: string[][]): File {
 }
 
 const legacyCampaignHeaders = [
-  "Seria",
+  "Kampania",
   "Firma",
   "Imię i nazwisko",
   "Stanowisko",
   "Email",
-  "Mail 1",
-  "Mail 2",
-  "Mail 3",
+  "Seria 1",
+  "Seria 2",
+  "Seria 3",
 ];
 
 function legacyCampaignRow(
@@ -78,12 +78,12 @@ describe("normalizeCompanyName", () => {
 });
 
 describe("buildSequenceSchedule", () => {
-  it("moves weekend dates to Monday", () => {
+  it("counts sequence offsets in business days", () => {
     const schedule = buildSequenceSchedule(new Date("2026-07-17T09:00:00Z"));
     expect(schedule.map((date) => date.toISOString().slice(0, 10))).toEqual([
       "2026-07-17",
-      "2026-07-20",
-      "2026-07-23",
+      "2026-07-22",
+      "2026-07-27",
     ]);
   });
 });
@@ -144,9 +144,21 @@ describe("campaign message content", () => {
 });
 
 describe("campaign import", () => {
+  it("rejects oversized files before reading them into memory", async () => {
+    const file = new File(
+      [new Uint8Array(10 * 1024 * 1024 + 1)],
+      "too-large.csv",
+      { type: "text/csv" },
+    );
+    const read = vi.spyOn(file, "arrayBuffer");
+
+    await expect(parseCampaignFile(file)).rejects.toThrow("limit 10 MB");
+    expect(read).not.toHaveBeenCalled();
+  });
+
   it("accepts the expanded campaign row domain", () => {
     const parsed = campaignImportRowSchema.safeParse({
-      seriesName: "PMO — seria 1",
+      seriesName: "PMO — kampania 1",
       companyName: "InnovaPM",
       fullName: "Jan Kowalski",
       role: "Prezes",
@@ -166,7 +178,7 @@ describe("campaign import", () => {
   it("maps contact aliases and composes separate subjects and bodies", async () => {
     const file = csvFile(
       [
-        "Seria",
+        "Kampania",
         "Nazwa firmy",
         "Imię i nazwisko",
         "Rola",
@@ -186,7 +198,7 @@ describe("campaign import", () => {
         "Źródło",
       ],
       [[
-        "PMO — seria 1",
+        "PMO — kampania 1",
         "Acme sp. z o.o.",
         "Anna Nowak",
         "CEO",
@@ -212,7 +224,7 @@ describe("campaign import", () => {
     expect(preview.issues).toEqual([]);
     expect(preview.rows).toHaveLength(1);
     expect(preview.rows[0]).toMatchObject({
-      seriesName: "PMO — seria 1",
+      seriesName: "PMO — kampania 1",
       companyName: "Acme sp. z o.o.",
       fullName: "Anna Nowak",
       role: "CEO",
@@ -232,7 +244,7 @@ describe("campaign import", () => {
   it("keeps Email separate from legacy Email 1", async () => {
     const headers = legacyCampaignHeaders.with(5, "Email 1");
     const preview = await parseCampaignFile(
-      csvFile(headers, [legacyCampaignRow("Seria A", "Acme", "jan@example.com")]),
+      csvFile(headers, [legacyCampaignRow("Kampania A", "Acme", "jan@example.com")]),
     );
 
     expect(preview.issues).toEqual([]);
@@ -240,20 +252,20 @@ describe("campaign import", () => {
     expect(preview.rows[0].email1).toContain("Pierwszy kontakt");
   });
 
-  it("reports repeated email and company in a series and contact across series", async () => {
+  it("reports repeated email and company in a campaign and contact across campaigns", async () => {
     const preview = await parseCampaignFile(
       csvFile(legacyCampaignHeaders, [
-        legacyCampaignRow("Seria A", "Acme sp. z o.o.", "jan@example.com"),
-        legacyCampaignRow("Seria A", "ACME", "JAN@example.com"),
-        legacyCampaignRow("Seria B", "Beta", "jan@example.com"),
+        legacyCampaignRow("Kampania A", "Acme sp. z o.o.", "jan@example.com"),
+        legacyCampaignRow("Kampania A", "ACME", "JAN@example.com"),
+        legacyCampaignRow("Kampania B", "Beta", "jan@example.com"),
       ]),
     );
 
     expect(preview.issues).toEqual([]);
     expect(preview.duplicates).toEqual([
-      "E-mail JAN@example.com powtórzony w serii „Seria A”",
-      "Firma ACME powtórzona w serii „Seria A”",
-      "Kontakt jan@example.com występuje w wielu seriach",
+      "E-mail JAN@example.com powtórzony w kampanii „Kampania A”",
+      "Firma ACME powtórzona w kampanii „Kampania A”",
+      "Kontakt jan@example.com występuje w wielu kampaniach",
     ]);
   });
 });

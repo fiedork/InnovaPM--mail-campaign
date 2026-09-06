@@ -11,14 +11,17 @@
   "workspace": {
     "packageJson": {
       "dependencies": [
+        "npm:@google/clasp@^3.3.0",
+        "npm:@netlify/plugin-nextjs@^5.15.13",
+        "npm:@playwright/test@^1.61.1",
         "npm:@types/node@20",
         "npm:@types/react-dom@19",
         "npm:@types/react@19",
-        "npm:eslint-config-next@16.2.10",
+        "npm:eslint-config-next@^16.2.12",
         "npm:eslint@9",
         "npm:fast-xml-parser@^5.10.1",
         "npm:jszip@^3.10.1",
-        "npm:next@16.2.10",
+        "npm:next@^16.2.12",
         "npm:react-dom@19.2.4",
         "npm:react@19.2.4",
         "npm:typescript@5",

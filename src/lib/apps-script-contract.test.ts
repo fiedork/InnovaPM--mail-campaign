@@ -44,6 +44,37 @@ describe("Apps Script HMAC contract", () => {
     expect(importContacts).not.toContain('appendObject_("Contacts"');
   });
 
+  it("deletes unsent campaigns with batch sheet operations", () => {
+    const source = getAppsScriptSource();
+    const deleteCampaign = source.match(
+      /function deleteCampaign_\(payload\) \{[\s\S]*?\n\}/,
+    )?.[0] ?? "";
+
+    expect(deleteCampaign).toContain('deleteRowsWhereBatch_("Messages"');
+    expect(deleteCampaign).toContain('deleteRowsWhereBatch_("Recipients"');
+    expect(deleteCampaign).toContain('deleteRowsWhereBatch_("Campaigns"');
+    expect(deleteCampaign).not.toContain('deleteRowsWhere_("Messages"');
+    expect(deleteCampaign).not.toContain('deleteRowsWhere_("Recipients"');
+    expect(deleteCampaign).not.toContain('deleteRowsWhere_("Campaigns"');
+  });
+
+  it("usuwa firmę z kampanii tylko przed zatwierdzeniem, batchowo i bez usuwania słownika Companies", () => {
+    const source = getAppsScriptSource();
+    const deleteCampaignCompany = source.match(
+      /function deleteCampaignCompany_\(payload\) \{[\s\S]*?\n\}/,
+    )?.[0] ?? "";
+
+    expect(deleteCampaignCompany).toContain("assertRecipientMutable_");
+    expect(deleteCampaignCompany).toContain('["draft", "needs_review"].indexOf(campaign.status) === -1');
+    expect(deleteCampaignCompany).toContain("Firma nie należy do wskazanej kampanii.");
+    expect(deleteCampaignCompany).toContain('deleteRowsWhereBatch_("Messages"');
+    expect(deleteCampaignCompany).toContain('deleteRowsWhereBatch_("Recipients"');
+    expect(deleteCampaignCompany).not.toContain('deleteRowsWhereBatch_("Companies"');
+    expect(deleteCampaignCompany).not.toContain('deleteRowsWhere_("');
+    const dispatch = source.match(/const handlers = \{[\s\S]*?\};/)?.[0] ?? "";
+    expect(dispatch).toContain("deleteCampaignCompany: deleteCampaignCompany_");
+  });
+
   it("supports legacy recipient migration and the complete review transition", () => {
     const source = getAppsScriptSource();
 
