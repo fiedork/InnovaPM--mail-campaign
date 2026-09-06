@@ -1,3 +1,4 @@
+import { backendErrorResponse, sendCommand } from "@/lib/apps-script";
 import { proxyMutation } from "@/lib/api";
 
 export async function PATCH(
@@ -12,12 +13,17 @@ export async function PATCH(
 }
 
 export async function DELETE(
-  request: Request,
+  _request: Request,
   context: RouteContext<"/api/campaigns/[id]/companies/[companyId]">,
 ) {
   const { id, companyId } = await context.params;
-  return proxyMutation(request, "deleteCampaignCompany", {
-    campaignId: id,
-    companyId,
-  });
+  try {
+    const data = await sendCommand("deleteCampaignCompany", {
+      campaignId: id,
+      companyId,
+    });
+    return Response.json({ ok: true, data });
+  } catch (error) {
+    return backendErrorResponse(error);
+  }
 }

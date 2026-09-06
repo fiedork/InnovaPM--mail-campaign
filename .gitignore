@@ -53,3 +53,6 @@ playwright-report/
 /architecture/
 /outputs/
 .DS_Store
+
+# clasp project config (local only)
+.clasp.json

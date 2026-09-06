@@ -75,6 +75,17 @@ describe("Apps Script HMAC contract", () => {
     expect(dispatch).toContain("deleteCampaignCompany: deleteCampaignCompany_");
   });
 
+  it("DELETE company route never requires a JSON body", () => {
+    const route = readFileSync(
+      "src/app/api/campaigns/[id]/companies/[companyId]/route.ts",
+      "utf8",
+    );
+
+    expect(route).toContain('sendCommand("deleteCampaignCompany"');
+    expect(route).not.toContain('proxyMutation(request, "deleteCampaignCompany"');
+    expect(route).toContain("_request: Request");
+  });
+
   it("supports legacy recipient migration and the complete review transition", () => {
     const source = getAppsScriptSource();
 
