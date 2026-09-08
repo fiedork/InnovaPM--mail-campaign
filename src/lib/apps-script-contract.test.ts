@@ -1,4 +1,5 @@
 import { readdirSync, readFileSync } from "node:fs";
+import { runInNewContext } from "node:vm";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -77,6 +78,63 @@ describe("Apps Script HMAC contract", () => {
     expect(source).toContain('const WORKBOOK_SCHEMA_VERSION = "8"');
     const dispatch = source.match(/const handlers = \{[\s\S]*?\};/)?.[0] ?? "";
     expect(dispatch).toContain("deleteCampaignCompany: deleteCampaignCompany_");
+  });
+
+  it("zachowuje wysłaną wiadomość i anuluje przyszłe po usunięciu firmy z aktywnej kampanii", () => {
+    const source = getAppsScriptSource();
+    const functionSource = source.match(
+      /function deleteCampaignCompany_\(payload\) \{[\s\S]*?\n\}\n\nfunction createCampaign_/,
+    )?.[0].replace(/\n\nfunction createCampaign_$/, "");
+    expect(functionSource).toBeTruthy();
+
+    const tables: Record<string, Array<Record<string, unknown>>> = {
+      Campaigns: [{ id: "campaign-1", status: "active", archivedAt: "" }],
+      Companies: [
+        { id: "company-1", name: "Firma A" },
+        { id: "company-2", name: "Firma B" },
+      ],
+      Messages: [
+        { id: "sent-1", campaignId: "campaign-1", companyId: "company-1", status: "sent", sentAt: "2026-09-01T10:00:00Z", scheduledAt: "" },
+        { id: "future-2", campaignId: "campaign-1", companyId: "company-1", status: "scheduled", sentAt: "", scheduledAt: "2026-09-10T10:00:00Z", threadId: "inherited-thread" },
+        { id: "other-1", campaignId: "campaign-1", companyId: "company-2", status: "scheduled", sentAt: "", scheduledAt: "2026-09-10T11:00:00Z" },
+      ],
+      Recipients: [
+        { id: "recipient-1", campaignId: "campaign-1", companyId: "company-1", contactId: "contact-1", active: "true" },
+        { id: "recipient-2", campaignId: "campaign-1", companyId: "company-2", contactId: "contact-2", active: "true" },
+      ],
+    };
+    const context = {
+      withMutationLock_: (callback: () => unknown) => callback(),
+      required_: (value: unknown) => value,
+      requireById_: (sheet: string, id: unknown) => tables[sheet].find((row) => row.id === id),
+      rows_: (sheet: string) => tables[sheet],
+      isoNow_: () => "2026-09-08T18:00:00Z",
+      updateRowsWhere_: (sheet: string, predicate: (row: Record<string, unknown>) => boolean, transform: (row: Record<string, unknown>) => Record<string, unknown>) => {
+        let count = 0;
+        tables[sheet] = tables[sheet].map((row) => {
+          if (!predicate(row)) return row;
+          count += 1;
+          return transform(row);
+        });
+        return count;
+      },
+      deleteRowsWhereBatch_: (sheet: string, predicate: (row: Record<string, unknown>) => boolean) => {
+        const before = tables[sheet].length;
+        tables[sheet] = tables[sheet].filter((row) => !predicate(row));
+        return before - tables[sheet].length;
+      },
+      audit_: () => undefined,
+    };
+    const remove = runInNewContext(`${functionSource}; deleteCampaignCompany_`, context) as (payload: Record<string, string>) => Record<string, unknown>;
+    const result = remove({ campaignId: "campaign-1", companyId: "company-1" });
+
+    expect(result).toMatchObject({ preservedHistory: true, cancelledMessages: 1, disabledRecipients: 1 });
+    expect(tables.Messages.find((message) => message.id === "sent-1")).toMatchObject({ status: "sent", sentAt: "2026-09-01T10:00:00Z" });
+    expect(tables.Messages.find((message) => message.id === "future-2")).toMatchObject({ status: "cancelled", scheduledAt: "" });
+    expect(tables.Messages.find((message) => message.id === "other-1")).toMatchObject({ status: "scheduled" });
+    expect(tables.Recipients.find((recipient) => recipient.id === "recipient-1")).toMatchObject({ active: "false", removedAt: "2026-09-08T18:00:00Z" });
+    expect(tables.Recipients.find((recipient) => recipient.id === "recipient-2")).toMatchObject({ active: "true" });
+    expect(tables.Companies).toHaveLength(2);
   });
 
   it("DELETE company route never requires a JSON body", () => {
