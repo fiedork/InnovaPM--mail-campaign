@@ -98,12 +98,13 @@ describe("workflow sekwencji", () => {
     expect(source).not.toContain("displayedDryRun");
   });
 
-  it("pozwala usunąć firmę z kampanii wyłącznie przed zatwierdzeniem", () => {
+  it("pozwala usunąć niewysłaną firmę ze szkicu albo trwającej kampanii", () => {
     expect(source).toContain("async function removeCampaignCompany");
     expect(source).toContain('method: "DELETE"');
     expect(source).toContain("Usuń firmę");
     expect(source).toContain('canRemove && <button type="button" className="button compact danger"');
-    expect(source).toContain('const canRemove = !archived && ["draft", "needs_review"].includes(status);');
+    expect(source).toContain('const canRemove = !archived && ["draft", "needs_review", "active", "paused"].includes(status);');
+    expect(source).toContain("Kampania będzie działać dalej dla pozostałych firm.");
   });
 
   it("weryfikuje faktyczny status po przerwanej zmianie statusu", () => {

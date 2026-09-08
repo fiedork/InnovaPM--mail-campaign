@@ -473,8 +473,8 @@ function deleteCampaignCompany_(payload) {
   return withMutationLock_(function() {
     const campaign = requireById_("Campaigns", required_(payload.campaignId, "Kampania"));
     if (campaign.archivedAt) throw new Error("Kampania jest zarchiwizowana.");
-    if (["draft", "needs_review"].indexOf(campaign.status) === -1) {
-      throw new Error("Firmę można usunąć tylko przed zatwierdzeniem kampanii.");
+    if (["draft", "needs_review", "active", "paused"].indexOf(campaign.status) === -1) {
+      throw new Error("Firmę można usunąć ze szkicu albo trwającej kampanii tylko przed rozpoczęciem korespondencji.");
     }
     const companyId = required_(payload.companyId, "Firma");
     const company = requireById_("Companies", companyId);

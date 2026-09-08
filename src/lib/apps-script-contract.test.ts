@@ -58,14 +58,15 @@ describe("Apps Script HMAC contract", () => {
     expect(deleteCampaign).not.toContain('deleteRowsWhere_("Campaigns"');
   });
 
-  it("usuwa firmę z kampanii tylko przed zatwierdzeniem, batchowo i bez usuwania słownika Companies", () => {
+  it("usuwa firmę z kampanii przed zatwierdzeniem albo podczas aktywnej wysyłki, jeśli nie rozpoczęto korespondencji", () => {
     const source = getAppsScriptSource();
     const deleteCampaignCompany = source.match(
       /function deleteCampaignCompany_\(payload\) \{[\s\S]*?\n\}/,
     )?.[0] ?? "";
 
     expect(deleteCampaignCompany).toContain("assertRecipientMutable_");
-    expect(deleteCampaignCompany).toContain('["draft", "needs_review"].indexOf(campaign.status) === -1');
+    expect(deleteCampaignCompany).toContain('["draft", "needs_review", "active", "paused"].indexOf(campaign.status) === -1');
+    expect(deleteCampaignCompany).toContain("Firmę można usunąć ze szkicu albo trwającej kampanii tylko przed rozpoczęciem korespondencji.");
     expect(deleteCampaignCompany).toContain("Firma nie należy do wskazanej kampanii.");
     expect(deleteCampaignCompany).toContain('deleteRowsWhereBatch_("Messages"');
     expect(deleteCampaignCompany).toContain('deleteRowsWhereBatch_("Recipients"');
