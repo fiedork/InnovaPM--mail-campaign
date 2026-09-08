@@ -2,13 +2,13 @@ const SHEETS = {
   Campaigns: ["id", "name", "status", "dryRun", "dailyLimit", "sendFrom", "sendTo", "startDate", "mail2DelayBusinessDays", "mail3DelayBusinessDays", "footerId", "createdAt", "updatedAt", "archivedAt"],
   Companies: ["id", "name", "normalizedName", "sector", "trigger", "packageName", "source", "createdAt", "updatedAt"],
   Contacts: ["id", "companyId", "companyName", "fullName", "role", "email", "phone", "linkedin", "source", "note", "status", "createdAt", "updatedAt"],
-  Recipients: ["id", "campaignId", "companyId", "contactId", "active", "createdAt", "updatedAt"],
+  Recipients: ["id", "campaignId", "companyId", "contactId", "active", "createdAt", "updatedAt", "removedAt"],
   Messages: ["id", "campaignId", "companyId", "contactId", "step", "subject", "body", "scheduledAt", "status", "gmailMessageId", "threadId", "sendMode", "attempts", "lastError", "sentAt", "openedAt", "trackingKey", "updatedAt"],
   Events: ["id", "timestamp", "actor", "type", "entityType", "entityId", "beforeJson", "afterJson", "detail"],
   Suppression: ["id", "email", "reason", "sourceMessageId", "createdAt"],
   Settings: ["key", "value", "updatedAt"]
 };
-const WORKBOOK_SCHEMA_VERSION = "7";
+const WORKBOOK_SCHEMA_VERSION = "8";
 
 function initializeWorkbook_() {
   const properties = PropertiesService.getScriptProperties();

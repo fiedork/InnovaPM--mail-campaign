@@ -266,6 +266,10 @@ function getCampaignStats_(payload) {
     const campaignRecipients = recipients.filter(function(recipient) {
       return recipient.campaignId === campaign.id && isActiveFlag_(recipient.active);
     });
+    const removedCompanyIds = {};
+    recipients.filter(function(recipient) {
+      return recipient.campaignId === campaign.id && Boolean(recipient.removedAt);
+    }).forEach(function(recipient) { removedCompanyIds[recipient.companyId] = true; });
     const replyCompanyIds = {};
     events.filter(function(event) { return event.type === "reply_detected"; }).forEach(function(event) {
       try {
@@ -307,7 +311,9 @@ function getCampaignStats_(payload) {
       replies: Object.keys(replyCompanyIds).length,
       bounces: Object.keys(bouncedContacts).length,
       steps: steps,
-      companies: unique_(campaignMessages.map(function(message) { return message.companyId; })).length,
+      companies: unique_(campaignMessages.map(function(message) { return message.companyId; }).filter(function(companyId) {
+        return !removedCompanyIds[companyId];
+      })).length,
       recipients: unique_(campaignRecipients.map(function(recipient) { return recipient.companyId; })).length,
       updatedAt: campaign.updatedAt || campaign.createdAt || "",
       archivedAt: campaign.archivedAt || ""
@@ -357,7 +363,13 @@ function getCampaign_(payload) {
       contactsByCompany[contact.companyId].push(contact);
     }
   });
-  const companyIds = unique_(messages.map(function(item) { return item.companyId; }));
+  const removedCompanyIds = {};
+  recipients.filter(function(recipient) { return Boolean(recipient.removedAt); }).forEach(function(recipient) {
+    removedCompanyIds[recipient.companyId] = true;
+  });
+  const companyIds = unique_(messages.map(function(item) { return item.companyId; })).filter(function(companyId) {
+    return !removedCompanyIds[companyId];
+  });
   const companies = rows_("Companies").filter(function(item) {
     return companyIds.indexOf(item.id) !== -1;
   }).map(function(company) {
@@ -474,7 +486,7 @@ function deleteCampaignCompany_(payload) {
     const campaign = requireById_("Campaigns", required_(payload.campaignId, "Kampania"));
     if (campaign.archivedAt) throw new Error("Kampania jest zarchiwizowana.");
     if (["draft", "needs_review", "active", "paused"].indexOf(campaign.status) === -1) {
-      throw new Error("Firmę można usunąć ze szkicu albo trwającej kampanii tylko przed rozpoczęciem korespondencji.");
+      throw new Error("Firmę można usunąć ze szkicu albo trwającej kampanii.");
     }
     const companyId = required_(payload.companyId, "Firma");
     const company = requireById_("Companies", companyId);
@@ -482,21 +494,50 @@ function deleteCampaignCompany_(payload) {
       return message.campaignId === campaign.id && message.companyId === company.id;
     });
     if (!campaignMessages.length) throw new Error("Firma nie należy do wskazanej kampanii.");
-    assertRecipientMutable_(campaign.id, company.id);
-    const deletedMessages = deleteRowsWhereBatch_("Messages", function(message) {
-      return message.campaignId === campaign.id && message.companyId === company.id;
+
+    const hasSentHistory = campaignMessages.some(function(message) {
+      return Boolean(message.sentAt || message.openedAt) || ["sent", "replied"].indexOf(message.status) !== -1;
     });
-    const deletedRecipients = deleteRowsWhereBatch_("Recipients", function(recipient) {
-      return recipient.campaignId === campaign.id && recipient.companyId === company.id;
-    });
+    let deletedMessages = 0;
+    let deletedRecipients = 0;
+    let cancelledMessages = 0;
+    let disabledRecipients = 0;
+    const now = isoNow_();
+
+    if (hasSentHistory) {
+      cancelledMessages = updateRowsWhere_("Messages", function(message) {
+        return message.campaignId === campaign.id && message.companyId === company.id && !message.sentAt &&
+          ["sent", "replied"].indexOf(message.status) === -1;
+      }, function(message) {
+        return Object.assign({}, message, { status: "cancelled", scheduledAt: "", updatedAt: now });
+      });
+      disabledRecipients = updateRowsWhere_("Recipients", function(recipient) {
+        return recipient.campaignId === campaign.id && recipient.companyId === company.id;
+      }, function(recipient) {
+        return Object.assign({}, recipient, { active: "false", updatedAt: now, removedAt: now });
+      });
+    } else {
+      deletedMessages = deleteRowsWhereBatch_("Messages", function(message) {
+        return message.campaignId === campaign.id && message.companyId === company.id;
+      });
+      deletedRecipients = deleteRowsWhereBatch_("Recipients", function(recipient) {
+        return recipient.campaignId === campaign.id && recipient.companyId === company.id;
+      });
+    }
+
     audit_("delete_company", "Campaign", campaign.id, company, null,
-      "Usunięto firmę " + company.name + " z kampanii: " + deletedRecipients + " przypisań odbiorców, " + deletedMessages + " wiadomości.");
+      "Usunięto firmę " + company.name + " z kampanii. Zachowano historię wysłanych wiadomości; anulowano " +
+      cancelledMessages + " przyszłych wiadomości, wyłączono " + disabledRecipients + " odbiorców, usunięto " +
+      deletedMessages + " niewysłanych wiadomości i " + deletedRecipients + " przypisań.");
     return {
       campaignId: campaign.id,
       companyId: company.id,
       companyName: company.name,
       deletedMessages: deletedMessages,
-      deletedRecipients: deletedRecipients
+      deletedRecipients: deletedRecipients,
+      cancelledMessages: cancelledMessages,
+      disabledRecipients: disabledRecipients,
+      preservedHistory: hasSentHistory
     };
   });
 }

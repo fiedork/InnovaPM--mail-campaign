@@ -58,20 +58,23 @@ describe("Apps Script HMAC contract", () => {
     expect(deleteCampaign).not.toContain('deleteRowsWhere_("Campaigns"');
   });
 
-  it("usuwa firmę z kampanii przed zatwierdzeniem albo podczas aktywnej wysyłki, jeśli nie rozpoczęto korespondencji", () => {
+  it("usuwa firmę ze szkicu albo wyłącza ją z aktywnej kampanii, zachowując wysłaną historię", () => {
     const source = getAppsScriptSource();
     const deleteCampaignCompany = source.match(
       /function deleteCampaignCompany_\(payload\) \{[\s\S]*?\n\}/,
     )?.[0] ?? "";
 
-    expect(deleteCampaignCompany).toContain("assertRecipientMutable_");
     expect(deleteCampaignCompany).toContain('["draft", "needs_review", "active", "paused"].indexOf(campaign.status) === -1');
-    expect(deleteCampaignCompany).toContain("Firmę można usunąć ze szkicu albo trwającej kampanii tylko przed rozpoczęciem korespondencji.");
+    expect(deleteCampaignCompany).toContain("message.sentAt");
     expect(deleteCampaignCompany).toContain("Firma nie należy do wskazanej kampanii.");
     expect(deleteCampaignCompany).toContain('deleteRowsWhereBatch_("Messages"');
+    expect(deleteCampaignCompany).toContain('updateRowsWhere_("Recipients"');
+    expect(deleteCampaignCompany).toContain("removedAt");
     expect(deleteCampaignCompany).toContain('deleteRowsWhereBatch_("Recipients"');
     expect(deleteCampaignCompany).not.toContain('deleteRowsWhereBatch_("Companies"');
     expect(deleteCampaignCompany).not.toContain('deleteRowsWhere_("');
+    expect(source).toContain('Recipients: ["id", "campaignId", "companyId", "contactId", "active", "createdAt", "updatedAt", "removedAt"]');
+    expect(source).toContain('const WORKBOOK_SCHEMA_VERSION = "8"');
     const dispatch = source.match(/const handlers = \{[\s\S]*?\};/)?.[0] ?? "";
     expect(dispatch).toContain("deleteCampaignCompany: deleteCampaignCompany_");
   });
@@ -156,7 +159,7 @@ describe("Apps Script HMAC contract", () => {
   it("initializes the workbook schema only once per version", () => {
     const source = getAppsScriptSource();
 
-    expect(source).toContain('const WORKBOOK_SCHEMA_VERSION = "7"');
+    expect(source).toContain('const WORKBOOK_SCHEMA_VERSION = "8"');
     expect(source).toContain('getProperty("WORKBOOK_SCHEMA_VERSION") === WORKBOOK_SCHEMA_VERSION');
     expect(source).toContain('setProperty("WORKBOOK_SCHEMA_VERSION", WORKBOOK_SCHEMA_VERSION)');
   });
