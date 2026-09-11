@@ -137,6 +137,17 @@ describe("Apps Script HMAC contract", () => {
     expect(tables.Companies).toHaveLength(2);
   });
 
+  it("przesuwa zaległą serię live na następne okno i zachowuje odstęp do serii 3", () => {
+    const source = getAppsScriptSource();
+    const queue = readFileSync("apps-script/Queue.gs", "utf8");
+    expect(queue).toContain("if (!dryRun) realignOverdueSequence_(campaign);");
+    expect(queue).toContain("function realignOverdueSequence_(campaign)");
+    expect(queue).toContain('message.status === "scheduled" && !message.sentAt');
+    expect(queue).toContain("const scheduled = step === 2 ? base : addBusinessDays_(base, delayToMail3);");
+    expect(queue).toContain('audit_("realign_sequence"');
+    expect(source).toContain("function nextWindowStart_(date, campaign)");
+  });
+
   it("DELETE company route never requires a JSON body", () => {
     const route = readFileSync(
       "src/app/api/campaigns/[id]/companies/[companyId]/route.ts",

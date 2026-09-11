@@ -24,6 +24,7 @@ function runQueue() {
 
 function processCampaignQueue_(campaign) {
   const dryRun = isDryRun_(campaign.dryRun);
+  if (!dryRun) realignOverdueSequence_(campaign);
   const dailyLimit = Math.max(1, Math.min(Number(campaign.dailyLimit || 20), MAX_DAILY_LIMIT));
   const due = rows_("Messages").filter(function(message) {
     return message.campaignId === campaign.id &&
@@ -48,6 +49,38 @@ function processCampaignQueue_(campaign) {
     }
   }
   completeCampaignIfFinished_(campaign.id);
+}
+
+function realignOverdueSequence_(campaign) {
+  const now = new Date();
+  const campaignMessages = rows_("Messages").filter(function(message) {
+    return message.campaignId === campaign.id && message.status === "scheduled" && !message.sentAt;
+  });
+  const overdue = campaignMessages.some(function(message) {
+    return Number(message.step) > 1 && message.scheduledAt && new Date(message.scheduledAt).getTime() <= now.getTime();
+  });
+  if (!overdue) return 0;
+
+  const base = nextWindowStart_(now, campaign);
+  const delayToMail3 = normalizeDelayDays_(campaign.mail3DelayBusinessDays || 3);
+  const updated = updateRowsWhere_("Messages", function(message) {
+    return message.campaignId === campaign.id && message.status === "scheduled" && !message.sentAt && Number(message.step) >= 2;
+  }, function(message) {
+    const step = Number(message.step);
+    const scheduled = step === 2 ? base : addBusinessDays_(base, delayToMail3);
+    return Object.assign({}, message, {
+      scheduledAt: scheduled.toISOString(),
+      updatedAt: isoNow_()
+    });
+  });
+  if (updated) {
+    audit_("realign_sequence", "Campaign", campaign.id, null, {
+      step2: base.toISOString(),
+      step3: addBusinessDays_(base, delayToMail3).toISOString(),
+      messages: updated
+    }, "Przesunięto zaległą sekwencję do kolejnych okien wysyłki.");
+  }
+  return updated;
 }
 
 function sentTodayCount_(campaignId) {
