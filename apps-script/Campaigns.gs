@@ -495,6 +495,13 @@ function deleteCampaignCompany_(payload) {
     });
     if (!campaignMessages.length) throw new Error("Firma nie należy do wskazanej kampanii.");
 
+    if (["active", "paused"].indexOf(campaign.status) !== -1) {
+      validateCampaignReady_(campaign.id, {
+        allowPastStartDate: true,
+        excludedCompanyIds: [company.id]
+      });
+    }
+
     const hasSentHistory = campaignMessages.some(function(message) {
       return Boolean(message.sentAt || message.openedAt) || ["sent", "replied"].indexOf(message.status) !== -1;
     });
@@ -523,6 +530,10 @@ function deleteCampaignCompany_(payload) {
       deletedRecipients = deleteRowsWhereBatch_("Recipients", function(recipient) {
         return recipient.campaignId === campaign.id && recipient.companyId === company.id;
       });
+    }
+
+    if (["active", "paused"].indexOf(campaign.status) !== -1) {
+      upsertSetting_("approvalSnapshot:" + campaign.id, JSON.stringify(buildApprovalSnapshot_(campaign.id)));
     }
 
     audit_("delete_company", "Campaign", campaign.id, company, null,
@@ -807,14 +818,19 @@ function scheduleCampaign_(campaignId) {
 
 function validateCampaignReady_(campaignId, options) {
   const campaign = requireById_("Campaigns", campaignId);
-  const messages = rows_("Messages").filter(function(message) { return message.campaignId === campaignId; });
+  const excludedCompanyIds = options && Array.isArray(options.excludedCompanyIds) ? options.excludedCompanyIds : [];
+  const activeRecipients = rows_("Recipients").filter(function(item) {
+    return item.campaignId === campaignId && isActiveFlag_(item.active) &&
+      excludedCompanyIds.indexOf(item.companyId) === -1;
+  });
+  const activeCompanyIds = unique_(activeRecipients.map(function(item) { return item.companyId; }));
+  const messages = rows_("Messages").filter(function(message) {
+    return message.campaignId === campaignId && activeCompanyIds.indexOf(message.companyId) !== -1;
+  });
   const contactsById = {};
   rows_("Contacts").forEach(function(contact) { contactsById[contact.id] = contact; });
   if (!messages.length) throw new Error("Kampania nie zawiera wiadomości.");
   const companyIds = unique_(messages.map(function(message) { return message.companyId; }));
-  const activeRecipients = rows_("Recipients").filter(function(item) {
-    return item.campaignId === campaignId && isActiveFlag_(item.active);
-  });
   if (activeRecipients.some(function(recipient) { return companyIds.indexOf(recipient.companyId) === -1; })) {
     throw new Error("Kampania zawiera odbiorcę bez odpowiadającej sekwencji wiadomości.");
   }
@@ -869,12 +885,14 @@ function isInFlightCampaign_(campaign) {
 
 function buildApprovalSnapshot_(campaignId) {
   const campaign = requireById_("Campaigns", campaignId);
-  const messages = rows_("Messages").filter(function(message) { return message.campaignId === campaignId; });
   const recipients = rows_("Recipients").filter(function(item) { return item.campaignId === campaignId && isActiveFlag_(item.active); });
+  const companyIds = unique_(recipients.map(function(recipient) { return recipient.companyId; }));
+  const messages = rows_("Messages").filter(function(message) {
+    return message.campaignId === campaignId && companyIds.indexOf(message.companyId) !== -1;
+  });
   const footerProfile = effectiveFooterProfile_(campaign, settings_());
   if (!footerProfile) throw new Error("Kampania nie ma poprawnie wybranej stopki.");
   const footerHash = bytesToHex_(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, footerProfile.html, Utilities.Charset.UTF_8));
-  const companyIds = unique_(messages.map(function(message) { return message.companyId; }));
   const companies = companyIds.map(function(companyId) {
     const recipient = recipients.find(function(item) { return item.companyId === companyId; });
     const contact = recipient ? requireById_("Contacts", recipient.contactId) : null;

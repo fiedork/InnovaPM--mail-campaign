@@ -66,5 +66,9 @@ export function backendErrorResponse(error: unknown): Response {
     );
   }
   const message = error instanceof Error ? error.message : "Nieznany błąd.";
+  console.error("Apps Script backend request failed", {
+    message,
+    errorType: error instanceof Error ? error.constructor.name : typeof error,
+  });
   return Response.json({ ok: false, error: message }, { status: 502 });
 }

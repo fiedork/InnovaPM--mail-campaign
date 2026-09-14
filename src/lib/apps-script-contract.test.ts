@@ -68,6 +68,8 @@ describe("Apps Script HMAC contract", () => {
     expect(deleteCampaignCompany).toContain('["draft", "needs_review", "active", "paused"].indexOf(campaign.status) === -1');
     expect(deleteCampaignCompany).toContain("message.sentAt");
     expect(deleteCampaignCompany).toContain("Firma nie należy do wskazanej kampanii.");
+    expect(deleteCampaignCompany).toContain("excludedCompanyIds: [company.id]");
+    expect(deleteCampaignCompany).toContain('upsertSetting_("approvalSnapshot:" + campaign.id');
     expect(deleteCampaignCompany).toContain('deleteRowsWhereBatch_("Messages"');
     expect(deleteCampaignCompany).toContain('updateRowsWhere_("Recipients"');
     expect(deleteCampaignCompany).toContain("removedAt");
@@ -103,12 +105,17 @@ describe("Apps Script HMAC contract", () => {
         { id: "recipient-2", campaignId: "campaign-1", companyId: "company-2", contactId: "contact-2", active: "true" },
       ],
     };
+    const validationCalls: Array<Record<string, unknown>> = [];
+    const settingWrites: Array<[string, string]> = [];
     const context = {
       withMutationLock_: (callback: () => unknown) => callback(),
       required_: (value: unknown) => value,
       requireById_: (sheet: string, id: unknown) => tables[sheet].find((row) => row.id === id),
       rows_: (sheet: string) => tables[sheet],
       isoNow_: () => "2026-09-08T18:00:00Z",
+      validateCampaignReady_: (_campaignId: string, options: Record<string, unknown>) => validationCalls.push(options),
+      buildApprovalSnapshot_: () => ({ campaignId: "campaign-1", companyCount: 1, contentHash: "remaining" }),
+      upsertSetting_: (key: string, value: string) => settingWrites.push([key, value]),
       updateRowsWhere_: (sheet: string, predicate: (row: Record<string, unknown>) => boolean, transform: (row: Record<string, unknown>) => Record<string, unknown>) => {
         let count = 0;
         tables[sheet] = tables[sheet].map((row) => {
@@ -129,6 +136,10 @@ describe("Apps Script HMAC contract", () => {
     const result = remove({ campaignId: "campaign-1", companyId: "company-1" });
 
     expect(result).toMatchObject({ preservedHistory: true, cancelledMessages: 1, disabledRecipients: 1 });
+    expect(validationCalls).toEqual([{ allowPastStartDate: true, excludedCompanyIds: ["company-1"] }]);
+    expect(settingWrites).toHaveLength(1);
+    expect(settingWrites[0][0]).toBe("approvalSnapshot:campaign-1");
+    expect(JSON.parse(settingWrites[0][1])).toMatchObject({ companyCount: 1, contentHash: "remaining" });
     expect(tables.Messages.find((message) => message.id === "sent-1")).toMatchObject({ status: "sent", sentAt: "2026-09-01T10:00:00Z" });
     expect(tables.Messages.find((message) => message.id === "future-2")).toMatchObject({ status: "cancelled", scheduledAt: "" });
     expect(tables.Messages.find((message) => message.id === "other-1")).toMatchObject({ status: "scheduled" });

@@ -286,7 +286,17 @@ export default function Home() {
         const settingsResponse = await fetch("/api/settings");
         const backendStatusResponse = await fetch("/api/backend-status");
         if (!contactsResponse.ok || !statusResponse.ok || !settingsResponse.ok) {
-          throw new Error("Nie udało się pobrać pełnych danych aplikacji.");
+          const failedResponse = [contactsResponse, statusResponse, settingsResponse].find((response) => !response.ok);
+          let backendMessage = "Nie udało się pobrać pełnych danych aplikacji.";
+          if (failedResponse) {
+            try {
+              const errorPayload = await failedResponse.clone().json() as { error?: string };
+              if (errorPayload.error) backendMessage = errorPayload.error;
+            } catch {
+              // Keep the safe generic fallback for non-JSON responses.
+            }
+          }
+          throw new Error(backendMessage);
         }
         {
           const result = await contactsResponse.json();
