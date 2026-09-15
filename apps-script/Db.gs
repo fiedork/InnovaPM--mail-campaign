@@ -166,6 +166,30 @@ function rows_(sheetName) {
   });
 }
 
+function createReadContext_(sheetNames, requestId) {
+  const context = {};
+  sheetNames.forEach(function(sheetName) {
+    const startedAt = Date.now();
+    const records = rows_(sheetName);
+    context[sheetName] = records;
+    console.info(JSON.stringify({
+      event: "sheet_read",
+      action: "getInitialData",
+      requestId: String(requestId || ""),
+      sheet: sheetName,
+      elapsedMs: Date.now() - startedAt,
+      rowCount: records.length
+    }));
+  });
+  return context;
+}
+
+function contextRows_(context, sheetName) {
+  const records = context && context[sheetName];
+  if (!Array.isArray(records)) throw new Error("Brak danych odczytowych arkusza: " + sheetName);
+  return records;
+}
+
 function appendObject_(sheetName, object) {
   const sheet = workbook_().getSheetByName(sheetName);
   const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getDisplayValues()[0];

@@ -24,6 +24,24 @@ describe("workflow sekwencji", () => {
     expect(source).toContain("Backend Apps Script nie odpowiada");
   });
 
+  it("ładuje dashboard jednym requestem bez sztucznych pauz", () => {
+    expect(source).toContain('fetch("/api/initial-data")');
+    expect(source).not.toContain("pauseBetweenReads");
+    expect(source).not.toContain("25_000");
+    expect(source).toContain("if (initialData.contactSummary) setContactSummary(initialData.contactSummary)");
+    expect(source).not.toContain("if (Array.isArray(initialData.contacts))");
+    expect(source).not.toContain("const settings = initialData.settings");
+  });
+
+  it("pobiera ciężkie dane dopiero po wejściu do właściwego widoku", () => {
+    expect(source).toContain('nextView === "contacts" && !contactsLoaded');
+    expect(source).toContain('nextView === "settings" && !settingsLoaded');
+    expect(source).toContain('fetch("/api/contacts")');
+    expect(source).toContain('fetch("/api/settings")');
+    expect(source).toContain('filter !== "active" && !archiveStatsLoaded');
+    expect(source).toContain('fetch(`/api/status?includeArchived=${includeArchived ? "true" : "false"}`)');
+  });
+
   it("przywraca archiwalną kampanię wyłącznie do ponownej akceptacji", () => {
     expect(source).toContain("async function restoreCampaign()");
     expect(source).toContain("async function restoreArchivedCampaign");

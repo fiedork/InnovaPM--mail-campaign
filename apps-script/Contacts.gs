@@ -88,12 +88,21 @@ function importContacts_(payload) {
 }
 
 function listContacts_() {
+  return listContactsFromContext_({
+    Campaigns: rows_("Campaigns"),
+    Recipients: rows_("Recipients"),
+    Suppression: rows_("Suppression"),
+    Contacts: rows_("Contacts")
+  });
+}
+
+function listContactsFromContext_(context) {
   const campaignsById = {};
-  rows_("Campaigns").filter(function(campaign) { return !campaign.archivedAt; }).forEach(function(campaign) {
+  contextRows_(context, "Campaigns").filter(function(campaign) { return !campaign.archivedAt; }).forEach(function(campaign) {
     campaignsById[campaign.id] = campaign;
   });
   const membershipsByContact = {};
-  rows_("Recipients").filter(function(recipient) {
+  contextRows_(context, "Recipients").filter(function(recipient) {
     return isActiveFlag_(recipient.active) && campaignsById[recipient.campaignId];
   }).forEach(function(recipient) {
     const membership = campaignsById[recipient.campaignId];
@@ -103,10 +112,10 @@ function listContacts_() {
     }
   });
   const suppressedEmails = {};
-  rows_("Suppression").forEach(function(item) {
+  contextRows_(context, "Suppression").forEach(function(item) {
     suppressedEmails[String(item.email || "").trim().toLowerCase()] = true;
   });
-  return rows_("Contacts").filter(function(contact) { return contact.status !== "deleted"; }).map(function(contact) {
+  return contextRows_(context, "Contacts").filter(function(contact) { return contact.status !== "deleted"; }).map(function(contact) {
     const memberships = (membershipsByContact[contact.id] || []).sort(function(a, b) {
       return String(b.updatedAt || "").localeCompare(String(a.updatedAt || ""));
     });
@@ -119,6 +128,31 @@ function listContacts_() {
       suppressed: Boolean(suppressedEmails[String(contact.email || "").trim().toLowerCase()])
     });
   });
+}
+
+function getContactSummaryFromContext_(context) {
+  const inFlightCampaignIds = {};
+  contextRows_(context, "Campaigns").filter(function(campaign) {
+    return !campaign.archivedAt && isInFlightCampaign_(campaign);
+  }).forEach(function(campaign) { inFlightCampaignIds[campaign.id] = true; });
+  const assignedContactIds = {};
+  contextRows_(context, "Recipients").filter(function(recipient) {
+    return isActiveFlag_(recipient.active) && inFlightCampaignIds[recipient.campaignId];
+  }).forEach(function(recipient) { assignedContactIds[recipient.contactId] = true; });
+  const suppressedEmails = {};
+  contextRows_(context, "Suppression").forEach(function(item) {
+    suppressedEmails[String(item.email || "").trim().toLowerCase()] = true;
+  });
+  const contacts = contextRows_(context, "Contacts").filter(function(contact) {
+    return contact.status !== "deleted";
+  });
+  return {
+    total: contacts.length,
+    available: contacts.filter(function(contact) {
+      const email = String(contact.email || "").trim().toLowerCase();
+      return !assignedContactIds[contact.id] && !suppressedEmails[email];
+    }).length
+  };
 }
 
 function createContact_(payload) {

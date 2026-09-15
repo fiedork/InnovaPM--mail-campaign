@@ -36,9 +36,10 @@ export async function sendCommand<T>(
   }
 
   const startedAt = Date.now();
+  const requestId = randomUUID();
   const timestamp = startedAt.toString();
   const nonce = randomUUID();
-  const body = JSON.stringify({ action, payload });
+  const body = JSON.stringify({ action, payload, requestId });
   const signature = createHmac("sha256", secret)
     .update(`${timestamp}.${nonce}.${body}`)
     .digest("hex");
@@ -52,6 +53,7 @@ export async function sendCommand<T>(
       body: JSON.stringify({ timestamp, nonce, body, signature }),
     });
     const responseText = await response.text();
+    const responseBytes = Buffer.byteLength(responseText, "utf8");
     let result: { ok?: boolean; data?: T; error?: string };
     try {
       result = JSON.parse(responseText) as typeof result;
@@ -63,15 +65,19 @@ export async function sendCommand<T>(
     }
     console.info("Apps Script backend request completed", {
       action,
+      requestId,
       elapsedMs: Date.now() - startedAt,
       hostname: new URL(url).hostname,
       status: response.status,
+      responseBytes,
+      stage: "response",
     });
     return result.data as T;
   } catch (error) {
     const isTimeout = error instanceof DOMException && error.name === "TimeoutError";
     console.error("Apps Script backend request failed", {
       action,
+      requestId,
       elapsedMs: Date.now() - startedAt,
       hostname: new URL(url).hostname,
       stage: isTimeout ? "timeout" : "request",

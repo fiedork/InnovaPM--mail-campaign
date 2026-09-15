@@ -257,11 +257,20 @@ function listCampaigns_(payload) {
 }
 
 function getCampaignStats_(payload) {
+  return getCampaignStatsFromContext_(payload, {
+    Messages: rows_("Messages"),
+    Events: rows_("Events"),
+    Recipients: rows_("Recipients"),
+    Campaigns: rows_("Campaigns")
+  });
+}
+
+function getCampaignStatsFromContext_(payload, context) {
   const includeArchived = payload && payload.includeArchived === true;
-  const messages = rows_("Messages");
-  const events = rows_("Events");
-  const recipients = rows_("Recipients");
-  return rows_("Campaigns").filter(function(campaign) { return includeArchived || !campaign.archivedAt; }).map(function(campaign) {
+  const messages = contextRows_(context, "Messages");
+  const events = contextRows_(context, "Events");
+  const recipients = contextRows_(context, "Recipients");
+  return contextRows_(context, "Campaigns").filter(function(campaign) { return includeArchived || !campaign.archivedAt; }).map(function(campaign) {
     const campaignMessages = messages.filter(function(message) { return message.campaignId === campaign.id; });
     const campaignRecipients = recipients.filter(function(recipient) {
       return recipient.campaignId === campaign.id && isActiveFlag_(recipient.active);

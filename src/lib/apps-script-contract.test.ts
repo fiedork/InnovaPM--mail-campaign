@@ -25,6 +25,98 @@ describe("Apps Script HMAC contract", () => {
     expect(source).not.toContain("const attempts = retryableReads.has(action) ? 2 : 1");
   });
 
+  it("loads startup data through one read-only action and shared sheet context", () => {
+    const source = getAppsScriptSource();
+    const dispatcher = readFileSync("apps-script/Code.gs", "utf8");
+    const route = readFileSync("src/app/api/initial-data/route.ts", "utf8");
+
+    expect(source).toContain("getInitialData: getInitialData_");
+    expect(source).toContain("function getInitialData_(payload, meta)");
+    expect(dispatcher.indexOf("initializeWorkbook_();")).toBeLessThan(dispatcher.indexOf("return handlers[action](payload || {}"));
+    expect(source).toContain("createReadContext_([");
+    expect(source).toContain("getContactSummaryFromContext_(context)");
+    expect(source).toContain("getCampaignStatsFromContext_({ includeArchived: false }, context)");
+    expect(source).toContain('Utilities.newBlob(JSON.stringify(result), "application/json").getBytes().length');
+    expect(route).toContain('proxyGet("getInitialData")');
+    expect(route).not.toContain("proxyMutation");
+  });
+
+  it("executes getInitialData with one read per required sheet", () => {
+    const backendSource = ["Db.gs", "Contacts.gs", "InitialData.gs"]
+      .map((file) => readFileSync(join("apps-script", file), "utf8"))
+      .join("\n\n");
+    const tables: Record<string, Array<Record<string, unknown>>> = {
+      Campaigns: [{ id: "campaign-1", name: "Kampania Łódź", status: "active", archivedAt: "" }],
+      Contacts: [{ id: "contact-1", companyId: "company-1", email: "contact@example.com", status: "active" }],
+      Recipients: [{ campaignId: "campaign-1", contactId: "contact-1", active: "true" }],
+      Suppression: [],
+      Messages: [{ id: "message-1", campaignId: "campaign-1", step: "1", sentAt: "2026-09-01T10:00:00Z" }],
+      Events: [],
+    };
+    const reads: Record<string, number> = {};
+    let measuredBytes = 0;
+    const runtime = runInNewContext(`${backendSource};
+      rows_ = mockRows_;
+      isoNow_ = mockIsoNow_;
+      isInFlightCampaign_ = mockIsInFlightCampaign_;
+      getCampaignStatsFromContext_ = mockCampaignStats_;
+      getBackendStatus_ = mockBackendStatus_;
+      getInitialData_;`, {
+      console: { info: () => undefined },
+      mockRows_: (sheet: string) => {
+        reads[sheet] = (reads[sheet] || 0) + 1;
+        return tables[sheet];
+      },
+      mockIsoNow_: () => "2026-09-15T18:00:00Z",
+      mockIsInFlightCampaign_: () => true,
+      mockCampaignStats_: (payload: { includeArchived: boolean }, context: Record<string, unknown[]>) => {
+        expect(payload.includeArchived).toBe(false);
+        const campaign = context.Campaigns[0] as Record<string, unknown>;
+        return [{ id: campaign.id, name: campaign.name, sent: context.Messages.length }];
+      },
+      mockBackendStatus_: () => ({ senderReady: true }),
+      Utilities: {
+        newBlob: (value: string) => ({ getBytes: () => {
+          const bytes = Array.from(Buffer.from(value, "utf8"));
+          measuredBytes = bytes.length;
+          return bytes;
+        } }),
+      },
+    }) as (payload: Record<string, unknown>, meta: { requestId: string }) => Record<string, unknown>;
+
+    const result = runtime({}, { requestId: "request-1" });
+
+    expect(result).toMatchObject({
+      schemaVersion: 1,
+      generatedAt: "2026-09-15T18:00:00Z",
+      contactSummary: { total: 1, available: 0 },
+      seriesStats: [{ id: "campaign-1", name: "Kampania Łódź", sent: 1 }],
+      backendStatus: { senderReady: true },
+    });
+    expect(result).not.toHaveProperty("contacts");
+    expect(result).not.toHaveProperty("settings");
+    expect(measuredBytes).toBe(Buffer.byteLength(JSON.stringify(result), "utf8"));
+    expect(measuredBytes).toBeGreaterThan(JSON.stringify(result).length);
+    expect(reads).toEqual({
+      Campaigns: 1,
+      Contacts: 1,
+      Recipients: 1,
+      Suppression: 1,
+      Messages: 1,
+      Events: 1,
+    });
+  });
+
+  it("correlates proxy and Apps Script telemetry without logging request bodies", () => {
+    const proxy = readFileSync("src/lib/apps-script.ts", "utf8");
+    const backend = readFileSync("apps-script/Code.gs", "utf8");
+
+    expect(proxy).toContain("const requestId = randomUUID()");
+    expect(proxy).toContain("responseBytes");
+    expect(backend).toContain('event: "request_complete"');
+    expect(backend).not.toContain("postData.contents,");
+  });
+
   it("uses UTF-8 explicitly for every HMAC-SHA256 signature", () => {
     const source = getAppsScriptSource();
     const calls = source.match(/Utilities\.computeHmacSha256Signature\([\s\S]*?\)/g) ?? [];

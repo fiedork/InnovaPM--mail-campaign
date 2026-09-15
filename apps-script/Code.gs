@@ -3,11 +3,23 @@ const TIMEZONE = "Europe/Warsaw";
 const MAX_DAILY_LIMIT = 40;
 
 function doPost(e) {
+  const startedAt = Date.now();
+  let action = "unknown";
+  let requestId = "";
   try {
     const envelope = JSON.parse(e.postData.contents || "{}");
     verifyEnvelope_(envelope);
     const request = JSON.parse(envelope.body);
-    const data = dispatch_(request.action, request.payload || {});
+    action = request.action;
+    requestId = String(request.requestId || "");
+    const data = dispatch_(action, request.payload || {}, requestId);
+    console.info(JSON.stringify({
+      event: "request_complete",
+      action: action,
+      requestId: requestId,
+      elapsedMs: Date.now() - startedAt,
+      responseBytes: Utilities.newBlob(JSON.stringify(data), "application/json").getBytes().length
+    }));
     return json_({ ok: true, data: data });
   } catch (error) {
     console.error(error && error.stack ? error.stack : error);
@@ -15,7 +27,7 @@ function doPost(e) {
   }
 }
 
-function dispatch_(action, payload) {
+function dispatch_(action, payload, requestId) {
   if (!action || typeof action !== "string") {
     throw new Error("Nieprawidłowa lub brakująca akcja w żądaniu.");
   }
@@ -48,11 +60,12 @@ function dispatch_(action, payload) {
     updateSettings: updateSettings_,
     getBackendStatus: getBackendStatus_,
     getCampaignStats: getCampaignStats_,
+    getInitialData: getInitialData_,
     recordOpen: recordOpen_,
     listEvents: listEvents_
   };
   if (!handlers[action]) throw new Error("Nieobsługiwana akcja: " + action);
-  return handlers[action](payload || {});
+  return handlers[action](payload || {}, { requestId: String(requestId || "") });
 }
 
 function json_(payload) {

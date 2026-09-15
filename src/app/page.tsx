@@ -214,6 +214,10 @@ export default function Home() {
   const [notice, setNotice] = useState("");
   const [initializing, setInitializing] = useState(true);
   const [contacts, setContacts] = useState<ContactWithCampaigns[]>([]);
+  const [contactSummary, setContactSummary] = useState({ total: 0, available: 0 });
+  const [contactsLoaded, setContactsLoaded] = useState(false);
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
+  const [archiveStatsLoaded, setArchiveStatsLoaded] = useState(false);
   const [contactSearch, setContactSearch] = useState("");
   const [contactFilter, setContactFilter] = useState<ContactFilter>("all");
   const [showAddContact, setShowAddContact] = useState(false);
@@ -276,63 +280,29 @@ export default function Home() {
         if (typeof health.ownerEmail === "string") setOwnerEmail(health.ownerEmail);
         if (!configured) {
           setContacts([demoContact]);
+          setContactSummary({ total: 1, available: 1 });
+          setContactsLoaded(true);
+          setSettingsLoaded(true);
           setSeriesStats([demoSeries]);
           return;
         }
-        // Apps Script serializes workbook access. Keep enough distance between
-        // cold workbook reads to prevent Google front-door queue timeouts.
-        const pauseBetweenReads = () => new Promise((resolve) => window.setTimeout(resolve, 25_000));
-        const backendStatusResponse = await fetch("/api/backend-status");
-        await pauseBetweenReads();
-        const contactsResponse = await fetch("/api/contacts");
-        await pauseBetweenReads();
-        const statusResponse = await fetch("/api/status?includeArchived=true");
-        await pauseBetweenReads();
-        const settingsResponse = await fetch("/api/settings");
-        if (!contactsResponse.ok || !statusResponse.ok || !settingsResponse.ok) {
-          const failedResponse = [contactsResponse, statusResponse, settingsResponse].find((response) => !response.ok);
-          let backendMessage = "Nie udało się pobrać pełnych danych aplikacji.";
-          if (failedResponse) {
-            try {
-              const errorPayload = await failedResponse.clone().json() as { error?: string };
-              if (errorPayload.error) backendMessage = errorPayload.error;
-            } catch {
-              // Keep the safe generic fallback for non-JSON responses.
-            }
+        const initialResponse = await fetch("/api/initial-data");
+        if (!initialResponse.ok) {
+          let backendMessage = "Nie udało się pobrać danych startowych aplikacji.";
+          try {
+            const errorPayload = await initialResponse.clone().json() as { error?: string };
+            if (errorPayload.error) backendMessage = errorPayload.error;
+          } catch {
+            // Keep the safe generic fallback for non-JSON responses.
           }
           throw new Error(backendMessage);
         }
-        {
-          const result = await contactsResponse.json();
-          if (Array.isArray(result.data)) setContacts(result.data);
-        }
-        {
-          const result = await statusResponse.json();
-          if (Array.isArray(result.data)) setSeriesStats(result.data);
-        }
-        {
-          const result = await settingsResponse.json();
-          const settings = result.data ?? {};
-          const loadedFooters = Array.isArray(settings.footerProfiles) && settings.footerProfiles.length
-            ? settings.footerProfiles as FooterProfile[]
-            : [{ id: "footer-default", name: "Domyślna", html: String(settings.emailFooterHtml || defaultFooterHtml) }];
-          const loadedDefaultFooterId = loadedFooters.some((profile) => profile.id === settings.defaultFooterId)
-            ? String(settings.defaultFooterId)
-            : loadedFooters[0].id;
-          setFooterProfiles(loadedFooters);
-          setDefaultFooterId(loadedDefaultFooterId);
-          setEditingFooterId(loadedDefaultFooterId);
-          if (typeof settings.dryRun === "boolean") setDefaultDryRun(settings.dryRun);
-          if (Number.isFinite(Number(settings.dailyLimit))) setDefaultDailyLimit(Number(settings.dailyLimit));
-          if (typeof settings.sendFrom === "string") setDefaultSendFrom(settings.sendFrom);
-          if (typeof settings.sendTo === "string") setDefaultSendTo(settings.sendTo);
-          if (Number.isFinite(Number(settings.mail2DelayBusinessDays))) setDefaultMail2DelayBusinessDays(Number(settings.mail2DelayBusinessDays));
-          if (Number.isFinite(Number(settings.mail3DelayBusinessDays))) setDefaultMail3DelayBusinessDays(Number(settings.mail3DelayBusinessDays));
-          if (typeof settings.timezone === "string") setTimezone(settings.timezone);
-        }
-        if (backendStatusResponse.ok) {
-          const result = await backendStatusResponse.json();
-          setBackendStatus(result.data ?? null);
+        const result = await initialResponse.json();
+        const initialData = result.data ?? {};
+        if (initialData.contactSummary) setContactSummary(initialData.contactSummary);
+        if (Array.isArray(initialData.seriesStats)) setSeriesStats(initialData.seriesStats);
+        if (initialData.backendStatus) {
+          setBackendStatus(initialData.backendStatus);
           setBackendStatusError("");
         } else {
           setBackendStatus(null);
@@ -414,25 +384,71 @@ export default function Home() {
     if (dirtyMessageKeys.size > 0 && !window.confirm("Masz niezapisane zmiany w seriach maili. Opuścić ten ekran?")) return;
     setView(nextView);
     if (nextView === "campaigns") setActiveCampaignId(null);
+    if (nextView === "contacts" && !contactsLoaded) void refreshContacts();
+    if (nextView === "settings" && !settingsLoaded) void loadSettings();
   }
 
   async function refreshContacts() {
     if (!backend) return;
     const response = await fetch("/api/contacts");
     const result = await response.json();
-    if (response.ok && Array.isArray(result.data)) setContacts(result.data);
+    if (response.ok && Array.isArray(result.data)) {
+      setContacts(result.data);
+      setContactSummary({
+        total: result.data.length,
+        available: result.data.filter((contact: ContactWithCampaigns) => !contact.currentCampaign && !contact.suppressed).length,
+      });
+      setContactsLoaded(true);
+    }
   }
 
-  async function refreshSeries() {
+  async function refreshSeries(includeArchived = true) {
     if (!backend) return;
-    const response = await fetch("/api/status?includeArchived=true");
+    const response = await fetch(`/api/status?includeArchived=${includeArchived ? "true" : "false"}`);
     const result = await response.json();
-    if (response.ok && Array.isArray(result.data)) setSeriesStats(result.data);
+    if (response.ok && Array.isArray(result.data)) {
+      setSeriesStats(result.data);
+      if (includeArchived) setArchiveStatsLoaded(true);
+    }
+  }
+
+  async function loadSettings() {
+    if (!backend) return;
+    const response = await fetch("/api/settings");
+    const result = await response.json();
+    if (!response.ok) {
+      setNotice(result.error || "Nie udało się pobrać ustawień.");
+      return;
+    }
+    const settings = result.data ?? {};
+    const loadedFooters = Array.isArray(settings.footerProfiles) && settings.footerProfiles.length
+      ? settings.footerProfiles as FooterProfile[]
+      : [{ id: "footer-default", name: "Domyślna", html: String(settings.emailFooterHtml || defaultFooterHtml) }];
+    const loadedDefaultFooterId = loadedFooters.some((profile) => profile.id === settings.defaultFooterId)
+      ? String(settings.defaultFooterId)
+      : loadedFooters[0].id;
+    setFooterProfiles(loadedFooters);
+    setDefaultFooterId(loadedDefaultFooterId);
+    setEditingFooterId(loadedDefaultFooterId);
+    if (typeof settings.dryRun === "boolean") setDefaultDryRun(settings.dryRun);
+    if (Number.isFinite(Number(settings.dailyLimit))) setDefaultDailyLimit(Number(settings.dailyLimit));
+    if (typeof settings.sendFrom === "string") setDefaultSendFrom(settings.sendFrom);
+    if (typeof settings.sendTo === "string") setDefaultSendTo(settings.sendTo);
+    if (Number.isFinite(Number(settings.mail2DelayBusinessDays))) setDefaultMail2DelayBusinessDays(Number(settings.mail2DelayBusinessDays));
+    if (Number.isFinite(Number(settings.mail3DelayBusinessDays))) setDefaultMail3DelayBusinessDays(Number(settings.mail3DelayBusinessDays));
+    if (typeof settings.timezone === "string") setTimezone(settings.timezone);
+    setSettingsLoaded(true);
+  }
+
+  function selectCampaignArchiveFilter(filter: CampaignArchiveFilter) {
+    setCampaignArchiveFilter(filter);
+    if (filter !== "active" && !archiveStatsLoaded) void refreshSeries(true);
   }
 
   async function loadCampaign(campaignId: string, tab: CampaignTab = "summary") {
     setNotice("Otwieram kampanię…");
     try {
+      if (backend && !settingsLoaded) await loadSettings();
       if (!backend && campaignId === demoSeries.id) {
         setActiveCampaignId(campaignId);
         setSeriesName(demoSeries.name);
@@ -1110,7 +1126,7 @@ export default function Home() {
         {!initializing && view === "dashboard" && <div className="stack">
           <div className="metrics"><Metric label="Kampanie uruchomione" value={String(activeCampaigns)} note={campaignCountLabel(openSeriesStats.length)} /><Metric label="Wymagają decyzji" value={String(actionRequired)} note="Szkic lub do akceptacji" /><Metric label="Wysłane" value={String(openSeriesStats.reduce((sum, item) => sum + item.sent, 0))} note="Łącznie" /><Metric label="Odpowiedzi" value={String(openSeriesStats.reduce((sum, item) => sum + item.replies, 0))} note="Łącznie" /></div>
           <section className="panel action-panel"><SectionTitle eyebrow="Najbliższa decyzja" title={actionRequired ? "Dokończ przygotowanie kampanii" : "Brak kampanii wymagających decyzji"}><button type="button" className="button primary" onClick={() => navigateTo("campaigns")}>Otwórz kampanie</button></SectionTitle><p className="copy">Przejdź kolejno przez odbiorców, treści i kontrolę gotowości. Uruchomienie jest dostępne dopiero po uzupełnieniu wszystkich wymaganych danych.</p></section>
-          <div className="columns"><section className="panel"><p className="eyebrow">Baza kontaktów</p><h2>{contacts.length} kontaktów</h2><p className="copy">{contacts.filter((contact) => !contact.currentCampaign && !contact.suppressed).length} osób można przypisać do nowej kampanii.</p><button type="button" className="button" onClick={() => navigateTo("contacts")}>Zarządzaj kontaktami</button></section><section className="panel"><p className="eyebrow">Integracja</p><h2>{backendStatusError ? "Backend niedostępny" : backend ? "Backend gotowy" : "Wymagana konfiguracja"}</h2><p className="copy">{backendStatusError ? "Apps Script nie odpowiedział. Operacje kampanii są zablokowane do czasu przywrócenia połączenia." : backend ? "Połączenie z Apps Script jest aktywne." : "Dane demonstracyjne pozostają wyłącznie lokalne."}</p>{backendStatus && <div className="readiness-grid backend-readiness"><ReadinessItem ready={backendStatus.queueTriggerInstalled} label="Kolejka wysyłki" detail={backendStatus.queueTriggerInstalled ? "runQueue aktywny" : "Brak triggera runQueue"} /><ReadinessItem ready={backendStatus.replyTriggerInstalled} label="Monitoring odpowiedzi" detail={backendStatus.replyTriggerInstalled ? "checkReplies aktywny" : "Brak triggera checkReplies"} /><ReadinessItem ready={backendStatus.senderReady} label="Nadawca" detail={backendStatus.senderReady ? senderStatusDetail(backendStatus) : backendStatus.senderError || "Wymaga autoryzacji"} /></div>}</section></div>
+          <div className="columns"><section className="panel"><p className="eyebrow">Baza kontaktów</p><h2>{contactSummary.total} kontaktów</h2><p className="copy">{contactSummary.available} osób można przypisać do nowej kampanii.</p><button type="button" className="button" onClick={() => navigateTo("contacts")}>Zarządzaj kontaktami</button></section><section className="panel"><p className="eyebrow">Integracja</p><h2>{backendStatusError ? "Backend niedostępny" : backend ? "Backend gotowy" : "Wymagana konfiguracja"}</h2><p className="copy">{backendStatusError ? "Apps Script nie odpowiedział. Operacje kampanii są zablokowane do czasu przywrócenia połączenia." : backend ? "Połączenie z Apps Script jest aktywne." : "Dane demonstracyjne pozostają wyłącznie lokalne."}</p>{backendStatus && <div className="readiness-grid backend-readiness"><ReadinessItem ready={backendStatus.queueTriggerInstalled} label="Kolejka wysyłki" detail={backendStatus.queueTriggerInstalled ? "runQueue aktywny" : "Brak triggera runQueue"} /><ReadinessItem ready={backendStatus.replyTriggerInstalled} label="Monitoring odpowiedzi" detail={backendStatus.replyTriggerInstalled ? "checkReplies aktywny" : "Brak triggera checkReplies"} /><ReadinessItem ready={backendStatus.senderReady} label="Nadawca" detail={backendStatus.senderReady ? senderStatusDetail(backendStatus) : backendStatus.senderError || "Wymaga autoryzacji"} /></div>}</section></div>
         </div>}
 
         {!initializing && view === "contacts" && <div className="stack">
@@ -1132,7 +1148,7 @@ export default function Home() {
         {!initializing && view === "campaigns" && !activeCampaignId && <div className="stack">
           <section className="panel action-panel"><SectionTitle eyebrow="Kampanie" title="Zarządzaj wysyłką"><button type="button" className="button primary" onClick={() => setShowCampaignImport((current) => !current)}>{showCampaignImport ? "Zamknij import" : "Importuj nową kampanię"}</button></SectionTitle><p className="copy">Jedna kampania łączy odbiorców, trzy serie wiadomości, harmonogram i wyniki.</p></section>
           {showCampaignImport && <><ImportPanel kind="campaign" title="Import kampanii XLSX/CSV" hint="Jeden plik: kampania, kontakt i Seria 1 / 2 / 3" ready={campaignImportReady} onFileChange={() => { setCampaignImportReady(false); if (importKind === "campaign") setImportResult(null); }} onSubmit={(event) => importFile(event, "campaign")} /><ImportSummary result={importKind === "campaign" ? importResult : null} /></>}
-          <section className="panel registry"><SectionTitle eyebrow="Rejestr kampanii" title="Nazwa kampanii"><span className="hint">{campaignCountLabel(visibleCampaignStats.length)}</span></SectionTitle><div className="campaign-filter-tabs mode-switch" aria-label="Filtr kampanii"><button type="button" className={campaignArchiveFilter === "active" ? "active" : ""} onClick={() => setCampaignArchiveFilter("active")}>Aktywne ({openSeriesStats.length})</button><button type="button" className={campaignArchiveFilter === "archived" ? "active" : ""} onClick={() => setCampaignArchiveFilter("archived")}>Zarchiwizowane ({archivedSeriesStats.length})</button><button type="button" className={campaignArchiveFilter === "all" ? "active" : ""} onClick={() => setCampaignArchiveFilter("all")}>Wszystkie ({seriesStats.length})</button></div>{visibleCampaignStats.length ? <div className="registry-table-wrap"><table className="registry-table"><thead><tr><th>Nazwa kampanii</th><th>Status</th><th>Firmy</th><th>Odbiorcy</th><th>Aktualizacja</th><th>Archiwizacja</th><th>Akcje</th></tr></thead><tbody>{visibleCampaignStats.map((series) => <tr key={series.id}><td><strong>{series.name}</strong></td><td><span className={`pill ${series.archivedAt ? "status-archived" : `status-${series.status}`}`}>{series.archivedAt ? "Zarchiwizowana" : labels[series.status]}</span></td><td>{series.companies}</td><td>{series.recipients}</td><td>{formatDate(series.updatedAt)}</td><td>{series.archivedAt ? formatDate(series.archivedAt) : "—"}</td><td><div className="table-actions">{series.archivedAt ? <button type="button" className="button compact primary" onClick={() => restoreArchivedCampaign(series)}>Przywróć</button> : <><button type="button" className="button compact primary" onClick={() => loadCampaign(series.id)}>Otwórz</button>{["active", "paused"].includes(series.status) && <button type="button" className="button compact danger" onClick={() => cancelCampaignFromRegistry(series)}>Anuluj</button>}<button type="button" className="button compact danger" onClick={() => deleteCampaign(series)}>{series.sent > 0 ? "Archiwizuj" : "Usuń"}</button></>}</div></td></tr>)}</tbody></table></div> : <p className="empty-state">{campaignArchiveFilter === "archived" ? "Brak zarchiwizowanych kampanii." : "Brak utworzonych kampanii. Zaimportuj pierwszy plik kampanii."}</p>}</section>
+          <section className="panel registry"><SectionTitle eyebrow="Rejestr kampanii" title="Nazwa kampanii"><span className="hint">{campaignCountLabel(visibleCampaignStats.length)}</span></SectionTitle><div className="campaign-filter-tabs mode-switch" aria-label="Filtr kampanii"><button type="button" className={campaignArchiveFilter === "active" ? "active" : ""} onClick={() => selectCampaignArchiveFilter("active")}>Aktywne ({openSeriesStats.length})</button><button type="button" className={campaignArchiveFilter === "archived" ? "active" : ""} onClick={() => selectCampaignArchiveFilter("archived")}>Zarchiwizowane ({archivedSeriesStats.length})</button><button type="button" className={campaignArchiveFilter === "all" ? "active" : ""} onClick={() => selectCampaignArchiveFilter("all")}>Wszystkie ({seriesStats.length})</button></div>{visibleCampaignStats.length ? <div className="registry-table-wrap"><table className="registry-table"><thead><tr><th>Nazwa kampanii</th><th>Status</th><th>Firmy</th><th>Odbiorcy</th><th>Aktualizacja</th><th>Archiwizacja</th><th>Akcje</th></tr></thead><tbody>{visibleCampaignStats.map((series) => <tr key={series.id}><td><strong>{series.name}</strong></td><td><span className={`pill ${series.archivedAt ? "status-archived" : `status-${series.status}`}`}>{series.archivedAt ? "Zarchiwizowana" : labels[series.status]}</span></td><td>{series.companies}</td><td>{series.recipients}</td><td>{formatDate(series.updatedAt)}</td><td>{series.archivedAt ? formatDate(series.archivedAt) : "—"}</td><td><div className="table-actions">{series.archivedAt ? <button type="button" className="button compact primary" onClick={() => restoreArchivedCampaign(series)}>Przywróć</button> : <><button type="button" className="button compact primary" onClick={() => loadCampaign(series.id)}>Otwórz</button>{["active", "paused"].includes(series.status) && <button type="button" className="button compact danger" onClick={() => cancelCampaignFromRegistry(series)}>Anuluj</button>}<button type="button" className="button compact danger" onClick={() => deleteCampaign(series)}>{series.sent > 0 ? "Archiwizuj" : "Usuń"}</button></>}</div></td></tr>)}</tbody></table></div> : <p className="empty-state">{campaignArchiveFilter === "archived" ? "Brak zarchiwizowanych kampanii." : "Brak utworzonych kampanii. Zaimportuj pierwszy plik kampanii."}</p>}</section>
         </div>}
 
         {!initializing && view === "monitoring" && <div className="stack">
