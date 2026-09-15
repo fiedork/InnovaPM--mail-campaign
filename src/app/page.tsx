@@ -279,12 +279,12 @@ export default function Home() {
           setSeriesStats([demoSeries]);
           return;
         }
-        const [contactsResponse, statusResponse, settingsResponse, backendStatusResponse] = await Promise.all([
-          fetch("/api/contacts"),
-          fetch("/api/status?includeArchived=true"),
-          fetch("/api/settings"),
-          fetch("/api/backend-status"),
-        ]);
+        // Keep workbook reads sequential. Apps Script serializes access to the
+        // campaign sheet, while browser background timers may be heavily throttled.
+        const backendStatusResponse = await fetch("/api/backend-status");
+        const contactsResponse = await fetch("/api/contacts");
+        const statusResponse = await fetch("/api/status?includeArchived=true");
+        const settingsResponse = await fetch("/api/settings");
         if (!contactsResponse.ok || !statusResponse.ok || !settingsResponse.ok) {
           const failedResponse = [contactsResponse, statusResponse, settingsResponse].find((response) => !response.ok);
           let backendMessage = "Nie udało się pobrać pełnych danych aplikacji.";
