@@ -279,17 +279,12 @@ export default function Home() {
           setSeriesStats([demoSeries]);
           return;
         }
-        // Apps Script serializes workbook access and Google may keep an execution
-        // slot briefly after returning a response. Space startup reads so one slow
-        // request cannot amplify into a queue of Netlify timeouts.
-        const pauseBetweenReads = () => new Promise((resolve) => window.setTimeout(resolve, 8_000));
-        const backendStatusResponse = await fetch("/api/backend-status");
-        await pauseBetweenReads();
-        const contactsResponse = await fetch("/api/contacts");
-        await pauseBetweenReads();
-        const statusResponse = await fetch("/api/status?includeArchived=true");
-        await pauseBetweenReads();
-        const settingsResponse = await fetch("/api/settings");
+        const [contactsResponse, statusResponse, settingsResponse, backendStatusResponse] = await Promise.all([
+          fetch("/api/contacts"),
+          fetch("/api/status?includeArchived=true"),
+          fetch("/api/settings"),
+          fetch("/api/backend-status"),
+        ]);
         if (!contactsResponse.ok || !statusResponse.ok || !settingsResponse.ok) {
           const failedResponse = [contactsResponse, statusResponse, settingsResponse].find((response) => !response.ok);
           let backendMessage = "Nie udało się pobrać pełnych danych aplikacji.";
