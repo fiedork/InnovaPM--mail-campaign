@@ -16,17 +16,13 @@ describe("Apps Script HMAC contract", () => {
     expect(ignore).toContain("!*.gs");
   });
 
-  it("bounds proxy calls and retries only safe startup reads", () => {
+  it("uses one bounded proxy call and exposes controlled timeout responses", () => {
     const source = readFileSync("src/lib/apps-script.ts", "utf8");
 
-    expect(source).toContain("const deadline = Date.now() + 27_000");
-    expect(source).toContain("signal: AbortSignal.timeout(remainingMs)");
-    expect(source).toContain('"getBackendStatus"');
-    expect(source).toContain('"listContacts"');
-    expect(source).toContain('"getCampaignStats"');
-    expect(source).toContain('"getSettings"');
-    expect(source).toContain('"listCampaigns"');
-    expect(source).toContain("const attempts = retryableReads.has(action) ? 2 : 1");
+    expect(source).toContain("signal: AbortSignal.timeout(22_000)");
+    expect(source).toContain("class BackendTimeoutError");
+    expect(source).toContain('code: "APPS_SCRIPT_TIMEOUT"');
+    expect(source).not.toContain("const attempts = retryableReads.has(action) ? 2 : 1");
   });
 
   it("uses UTF-8 explicitly for every HMAC-SHA256 signature", () => {
