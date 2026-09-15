@@ -28,34 +28,53 @@ export async function sendCommand<T>(
     url = `https://${url}`;
   }
 
-  const timestamp = Date.now().toString();
-  const nonce = randomUUID();
-  const body = JSON.stringify({ action, payload });
-  const signature = createHmac("sha256", secret)
-    .update(`${timestamp}.${nonce}.${body}`)
-    .digest("hex");
-  // Apps Script may need a cold start and can serialize workbook access behind
-  // an earlier request. Do not abort at 30 seconds: doing so leaves the GAS
-  // execution running and makes each following request wait behind it.
-  const signal = AbortSignal.timeout(55_000);
+  const retryableReads = new Set([
+    "getBackendStatus",
+    "listContacts",
+    "getCampaignStats",
+    "getSettings",
+    "listCampaigns",
+  ]);
+  const attempts = retryableReads.has(action) ? 2 : 1;
+  const deadline = Date.now() + 27_000;
+  let lastError: unknown;
 
-  const response = await fetch(url, {
-    method: "POST",
-    cache: "no-store",
-    signal,
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ timestamp, nonce, body, signature }),
-  });
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const timestamp = Date.now().toString();
+    const nonce = randomUUID();
+    const body = JSON.stringify({ action, payload });
+    const signature = createHmac("sha256", secret)
+      .update(`${timestamp}.${nonce}.${body}`)
+      .digest("hex");
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) break;
 
-  const result = (await response.json()) as {
-    ok?: boolean;
-    data?: T;
-    error?: string;
-  };
-  if (!response.ok || !result.ok) {
-    throw new Error(result.error || `Apps Script zwrócił HTTP ${response.status}.`);
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        cache: "no-store",
+        signal: AbortSignal.timeout(remainingMs),
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ timestamp, nonce, body, signature }),
+      });
+      const responseText = await response.text();
+      let result: { ok?: boolean; data?: T; error?: string };
+      try {
+        result = JSON.parse(responseText) as typeof result;
+      } catch {
+        throw new Error(`Apps Script zwrócił odpowiedź inną niż JSON (HTTP ${response.status}).`);
+      }
+      if (!response.ok || !result.ok) {
+        throw new Error(result.error || `Apps Script zwrócił HTTP ${response.status}.`);
+      }
+      return result.data as T;
+    } catch (error) {
+      lastError = error;
+      if (attempt + 1 >= attempts || Date.now() >= deadline) throw error;
+    }
   }
-  return result.data as T;
+
+  throw lastError instanceof Error ? lastError : new Error("Apps Script nie odpowiedział w limicie czasu.");
 }
 
 export function backendErrorResponse(error: unknown): Response {

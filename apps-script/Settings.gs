@@ -189,19 +189,36 @@ function assertOperationalTriggers_() {
 }
 
 function getBackendStatus_() {
-  const triggers = ScriptApp.getProjectTriggers().map(function(trigger) {
-    return {
-      handler: trigger.getHandlerFunction(),
-      source: String(trigger.getTriggerSource()),
-      eventType: String(trigger.getEventType())
-    };
-  });
-  const triggerCounts = triggerCounts_();
+  let triggers = [];
+  let triggerCounts = {};
+  let triggerStatusAvailable = true;
+  let triggerStatusError = "";
+  try {
+    triggers = ScriptApp.getProjectTriggers().map(function(trigger) {
+      return {
+        handler: trigger.getHandlerFunction(),
+        source: String(trigger.getTriggerSource()),
+        eventType: String(trigger.getEventType())
+      };
+    });
+    triggerCounts = triggerCounts_();
+  } catch (error) {
+    triggerStatusAvailable = false;
+    triggerStatusError = error.message || String(error);
+    ownedTriggerHandlers_().forEach(function(handler) { triggerCounts[handler] = 0; });
+  }
   let senderReady = false;
   let senderError = "";
   const transport = sendTransport_();
   try {
-    assertSender_();
+    if (transport === "smtp") {
+      if (!smtpRelayUrl_()) throw new Error("Brak URL relay SMTP.");
+      if (!PropertiesService.getScriptProperties().getProperty("HMAC_SECRET")) {
+        throw new Error("Brak HMAC_SECRET w Script Properties.");
+      }
+    } else {
+      assertSender_();
+    }
     senderReady = true;
   } catch (error) {
     senderError = error.message || String(error);
@@ -209,13 +226,30 @@ function getBackendStatus_() {
   return {
     ownerEmail: OWNER_EMAIL,
     effectiveUser: Session.getEffectiveUser().getEmail() || "",
-    queueTriggerInstalled: triggerCounts.runQueue === 1,
-    replyTriggerInstalled: triggerCounts.checkReplies === 1,
+    queueTriggerInstalled: triggerStatusAvailable && triggerCounts.runQueue === 1,
+    replyTriggerInstalled: triggerStatusAvailable && triggerCounts.checkReplies === 1,
     triggerCounts: triggerCounts,
+    triggerStatusAvailable: triggerStatusAvailable,
+    triggerStatusError: triggerStatusError,
     senderReady: senderReady,
     senderError: senderError,
     sendTransport: transport,
     timezone: TIMEZONE
+  };
+}
+
+function authorizeProductionServices() {
+  const spreadsheet = workbook_();
+  const gmailProfile = Gmail.Users.getProfile("me");
+  assertSmtpRelay_();
+  installTriggers();
+  const triggers = ScriptApp.getProjectTriggers();
+  return {
+    authorized: true,
+    spreadsheetId: spreadsheet.getId(),
+    triggerCount: triggers.length,
+    gmailAddressAvailable: Boolean(gmailProfile && gmailProfile.emailAddress),
+    senderReady: true
   };
 }
 

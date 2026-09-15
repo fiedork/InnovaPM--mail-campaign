@@ -16,11 +16,17 @@ describe("Apps Script HMAC contract", () => {
     expect(ignore).toContain("!*.gs");
   });
 
-  it("times out calls to an unresponsive Apps Script backend", () => {
+  it("bounds proxy calls and retries only safe startup reads", () => {
     const source = readFileSync("src/lib/apps-script.ts", "utf8");
 
-    expect(source).toContain("AbortSignal.timeout(55_000)");
-    expect(source).toContain("signal,");
+    expect(source).toContain("const deadline = Date.now() + 27_000");
+    expect(source).toContain("signal: AbortSignal.timeout(remainingMs)");
+    expect(source).toContain('"getBackendStatus"');
+    expect(source).toContain('"listContacts"');
+    expect(source).toContain('"getCampaignStats"');
+    expect(source).toContain('"getSettings"');
+    expect(source).toContain('"listCampaigns"');
+    expect(source).toContain("const attempts = retryableReads.has(action) ? 2 : 1");
   });
 
   it("uses UTF-8 explicitly for every HMAC-SHA256 signature", () => {
@@ -426,8 +432,10 @@ describe("Apps Script HMAC contract", () => {
     expect(transitionCampaign).toContain('payload.action === "start" && target === "active" && current.status === "approved"');
     expect(source).toContain("getBackendStatus: getBackendStatus_");
     expect(source).toContain("function getBackendStatus_()");
-    expect(source).toContain("queueTriggerInstalled: triggerCounts.runQueue === 1");
-    expect(source).toContain("replyTriggerInstalled: triggerCounts.checkReplies === 1");
+    expect(source).toContain("queueTriggerInstalled: triggerStatusAvailable && triggerCounts.runQueue === 1");
+    expect(source).toContain("replyTriggerInstalled: triggerStatusAvailable && triggerCounts.checkReplies === 1");
+    expect(source).toContain("triggerStatusAvailable: triggerStatusAvailable");
+    expect(source).toContain("triggerStatusError: triggerStatusError");
     expect(source).toContain('payload.confirmLive !== true');
     expect(source).toContain("Start LIVE wymaga jawnego potwierdzenia checklisty wysyłki.");
     expect(source).toContain("function assertOperationalTriggers_()");

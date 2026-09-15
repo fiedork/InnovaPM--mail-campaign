@@ -9,6 +9,7 @@ const SHEETS = {
   Settings: ["key", "value", "updatedAt"]
 };
 const WORKBOOK_SCHEMA_VERSION = "8";
+let WORKBOOK_HANDLE_CACHE_ = null;
 
 function initializeWorkbook_() {
   const properties = PropertiesService.getScriptProperties();
@@ -138,9 +139,11 @@ function repairRecipientAssignments_() {
 }
 
 function workbook_() {
+  if (WORKBOOK_HANDLE_CACHE_) return WORKBOOK_HANDLE_CACHE_;
   const spreadsheetId = PropertiesService.getScriptProperties().getProperty("SPREADSHEET_ID");
   if (!spreadsheetId) throw new Error("Brak SPREADSHEET_ID. Uruchom configureProject w edytorze Apps Script.");
-  return SpreadsheetApp.openById(spreadsheetId);
+  WORKBOOK_HANDLE_CACHE_ = SpreadsheetApp.openById(spreadsheetId);
+  return WORKBOOK_HANDLE_CACHE_;
 }
 
 function isDryRun_(value) {
