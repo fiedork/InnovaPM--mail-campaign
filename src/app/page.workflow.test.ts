@@ -37,6 +37,9 @@ describe("workflow sekwencji", () => {
     expect(source).toContain('nextView === "contacts" && !contactsLoaded');
     expect(source).toContain('nextView === "settings" && !settingsLoaded');
     expect(source).toContain('fetch("/api/contacts")');
+    expect(source).toContain("setContactsError(error instanceof Error ? error.message");
+    expect(source).toContain("Pobieram kontakty…");
+    expect(source).toContain(">Ponów</button>");
     expect(source).toContain('fetch("/api/settings")');
     expect(source).toContain('filter !== "active" && !archiveStatsLoaded');
     expect(source).toContain('fetch(`/api/status?includeArchived=${includeArchived ? "true" : "false"}`)');

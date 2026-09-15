@@ -216,6 +216,8 @@ export default function Home() {
   const [contacts, setContacts] = useState<ContactWithCampaigns[]>([]);
   const [contactSummary, setContactSummary] = useState<{ total: number | null; available: number | null }>({ total: null, available: null });
   const [contactsLoaded, setContactsLoaded] = useState(false);
+  const [contactsLoading, setContactsLoading] = useState(false);
+  const [contactsError, setContactsError] = useState("");
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [archiveStatsLoaded, setArchiveStatsLoaded] = useState(false);
   const [contactSearch, setContactSearch] = useState("");
@@ -389,15 +391,22 @@ export default function Home() {
 
   async function refreshContacts() {
     if (!backend) return;
-    const response = await fetch("/api/contacts");
-    const result = await response.json();
-    if (response.ok && Array.isArray(result.data)) {
+    setContactsLoading(true);
+    setContactsError("");
+    try {
+      const response = await fetch("/api/contacts");
+      const result = await response.json();
+      if (!response.ok || !Array.isArray(result.data)) throw new Error(result.error || "Nie udało się pobrać kontaktów.");
       setContacts(result.data);
       setContactSummary({
         total: result.data.length,
         available: result.data.filter((contact: ContactWithCampaigns) => !contact.currentCampaign && !contact.suppressed).length,
       });
       setContactsLoaded(true);
+    } catch (error) {
+      setContactsError(error instanceof Error ? error.message : "Nie udało się pobrać kontaktów.");
+    } finally {
+      setContactsLoading(false);
     }
   }
 
@@ -1132,7 +1141,7 @@ export default function Home() {
           <section className="panel toolbar-panel"><div className="contact-toolbar"><label className="search-field">Szukaj<input type="search" value={contactSearch} onChange={(event) => setContactSearch(event.target.value)} placeholder="Imię, firma, stanowisko lub e-mail" /></label><label>Status<select value={contactFilter} onChange={(event) => setContactFilter(event.target.value as ContactFilter)}><option value="all">Wszystkie</option><option value="available">Dostępne</option><option value="campaign">W kampanii</option><option value="history">Po kampanii</option><option value="suppressed">Wykluczone</option></select></label><div className="toolbar-actions"><button type="button" className="button" onClick={() => setShowContactImport((current) => !current)}>{showContactImport ? "Zamknij import" : "Importuj kontakty"}</button><button type="button" className="button primary" onClick={() => setShowAddContact((current) => !current)}>{showAddContact ? "Anuluj dodawanie" : "Dodaj kontakt"}</button></div></div></section>
           {showContactImport && <><ImportPanel kind="contacts" title="Import kontaktów" hint="Dodanie osób do bazy bez tworzenia kampanii" ready={false} onSubmit={(event) => importFile(event, "contacts")} /><ImportSummary result={importKind === "contacts" ? importResult : null} /></>}
           {showAddContact && <section className="panel"><SectionTitle eyebrow="Nowy rekord" title="Dodaj kontakt ręcznie" /><form className="form-grid contact-create-form" key={addFormVersion} onSubmit={addContact}><label>Firma<input name="companyName" required /></label><label>Imię i nazwisko<input name="fullName" required /></label><RoleField /><label>Adres e-mail<input name="email" type="email" required /></label><label>Telefon<input name="phone" /></label><label>LinkedIn<input name="linkedin" type="url" /></label><label className="full">Notatka<textarea name="note" rows={3} /></label><div className="actions full"><button className="button primary">Dodaj kontakt</button><button className="button" type="button" onClick={() => setShowAddContact(false)}>Anuluj</button></div></form></section>}
-          <section className="panel contact-list"><SectionTitle title="Kontakty"><span className="hint">{filteredContacts.length} z {contacts.length}</span></SectionTitle>{filteredContacts.length === 0 && <p className="empty-state">Brak kontaktów odpowiadających filtrom.</p>}{filteredContacts.map((contact) => {
+          <section className="panel contact-list"><SectionTitle title="Kontakty"><span className="hint">{contactsLoaded ? `${filteredContacts.length} z ${contacts.length}` : contactsLoading ? "Ładowanie…" : "Niezaładowane"}</span></SectionTitle>{contactsLoading && <p className="empty-state" aria-live="polite">Pobieram kontakty…</p>}{contactsError && <div className="backend-alert" role="alert">{contactsError} <button type="button" className="button compact" onClick={() => void refreshContacts()}>Ponów</button></div>}{!contactsLoading && !contactsError && filteredContacts.length === 0 && <p className="empty-state">Brak kontaktów odpowiadających filtrom.</p>}{!contactsError && filteredContacts.map((contact) => {
             const editing = contact.id === editingContactId;
             const assigning = contact.id === campaignFormContactId;
             const contactStatus = contact.suppressed ? "Wykluczony" : contact.currentCampaign ? `${labels[contact.currentCampaign.status]}: ${contact.currentCampaign.name}` : contact.campaignHistory.length ? "Po kampanii" : "Dostępny";
