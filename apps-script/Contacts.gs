@@ -130,31 +130,6 @@ function listContactsFromContext_(context) {
   });
 }
 
-function getContactSummaryFromContext_(context) {
-  const inFlightCampaignIds = {};
-  contextRows_(context, "Campaigns").filter(function(campaign) {
-    return !campaign.archivedAt && isInFlightCampaign_(campaign);
-  }).forEach(function(campaign) { inFlightCampaignIds[campaign.id] = true; });
-  const assignedContactIds = {};
-  contextRows_(context, "Recipients").filter(function(recipient) {
-    return isActiveFlag_(recipient.active) && inFlightCampaignIds[recipient.campaignId];
-  }).forEach(function(recipient) { assignedContactIds[recipient.contactId] = true; });
-  const suppressedEmails = {};
-  contextRows_(context, "Suppression").forEach(function(item) {
-    suppressedEmails[String(item.email || "").trim().toLowerCase()] = true;
-  });
-  const contacts = contextRows_(context, "Contacts").filter(function(contact) {
-    return contact.status !== "deleted";
-  });
-  return {
-    total: contacts.length,
-    available: contacts.filter(function(contact) {
-      const email = String(contact.email || "").trim().toLowerCase();
-      return !assignedContactIds[contact.id] && !suppressedEmails[email];
-    }).length
-  };
-}
-
 function createContact_(payload) {
   validateEmail_(payload.email);
   if (findBy_("Contacts", "email", String(payload.email).toLowerCase())) {

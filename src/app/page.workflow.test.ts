@@ -28,7 +28,7 @@ describe("workflow sekwencji", () => {
     expect(source).toContain('fetch("/api/initial-data")');
     expect(source).not.toContain("pauseBetweenReads");
     expect(source).not.toContain("25_000");
-    expect(source).toContain("if (initialData.contactSummary) setContactSummary(initialData.contactSummary)");
+    expect(source).not.toContain("initialData.contactSummary");
     expect(source).not.toContain("if (Array.isArray(initialData.contacts))");
     expect(source).not.toContain("const settings = initialData.settings");
   });

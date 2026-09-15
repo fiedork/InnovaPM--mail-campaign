@@ -34,7 +34,7 @@ describe("Apps Script HMAC contract", () => {
     expect(source).toContain("function getInitialData_(payload, meta)");
     expect(dispatcher.indexOf("initializeWorkbook_();")).toBeLessThan(dispatcher.indexOf("return handlers[action](payload || {}"));
     expect(source).toContain("createReadContext_([");
-    expect(source).toContain("getContactSummaryFromContext_(context)");
+    expect(source).not.toContain("contactSummary: getContactSummaryFromContext_(context)");
     expect(source).toContain("getCampaignStatsFromContext_({ includeArchived: false }, context)");
     expect(source).toContain('Utilities.newBlob(JSON.stringify(result), "application/json").getBytes().length');
     expect(route).toContain('proxyGet("getInitialData")');
@@ -47,9 +47,7 @@ describe("Apps Script HMAC contract", () => {
       .join("\n\n");
     const tables: Record<string, Array<Record<string, unknown>>> = {
       Campaigns: [{ id: "campaign-1", name: "Kampania Łódź", status: "active", archivedAt: "" }],
-      Contacts: [{ id: "contact-1", companyId: "company-1", email: "contact@example.com", status: "active" }],
       Recipients: [{ campaignId: "campaign-1", contactId: "contact-1", active: "true" }],
-      Suppression: [],
       Messages: [{ id: "message-1", campaignId: "campaign-1", step: "1", sentAt: "2026-09-01T10:00:00Z" }],
       Events: [],
     };
@@ -89,19 +87,17 @@ describe("Apps Script HMAC contract", () => {
     expect(result).toMatchObject({
       schemaVersion: 1,
       generatedAt: "2026-09-15T18:00:00Z",
-      contactSummary: { total: 1, available: 0 },
       seriesStats: [{ id: "campaign-1", name: "Kampania Łódź", sent: 1 }],
       backendStatus: { senderReady: true },
     });
     expect(result).not.toHaveProperty("contacts");
+    expect(result).not.toHaveProperty("contactSummary");
     expect(result).not.toHaveProperty("settings");
     expect(measuredBytes).toBe(Buffer.byteLength(JSON.stringify(result), "utf8"));
     expect(measuredBytes).toBeGreaterThan(JSON.stringify(result).length);
     expect(reads).toEqual({
       Campaigns: 1,
-      Contacts: 1,
       Recipients: 1,
-      Suppression: 1,
       Messages: 1,
       Events: 1,
     });

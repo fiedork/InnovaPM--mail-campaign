@@ -3,16 +3,13 @@ function getInitialData_(payload, meta) {
   const requestId = meta && meta.requestId ? meta.requestId : "";
   const context = createReadContext_([
     "Campaigns",
-    "Contacts",
     "Recipients",
-    "Suppression",
     "Messages",
     "Events"
   ], requestId);
   const result = {
     schemaVersion: 1,
     generatedAt: isoNow_(),
-    contactSummary: getContactSummaryFromContext_(context),
     seriesStats: getCampaignStatsFromContext_({ includeArchived: false }, context),
     backendStatus: getBackendStatus_()
   };
